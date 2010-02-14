@@ -66,6 +66,14 @@ config MAGIC_SYSRQ
 	  keys are documented in <file:Documentation/sysrq.txt>. Don't say Y
 	  unless you really know what this hack does.
 
+config MAGIC_SYSRQ_DEFAULT_MASK
+	hex "Default mask for Magic SysRq keys on the console"
+	depends on MAGIC_SYSRQ
+	default 1
+	help
+	  Specifies the default mask for the allowed SysRq keys.  This can be
+	  used to disable several sensitive keys by default.
+
 config STRIP_ASM_SYMS
 	bool "Strip assembler-generated symbols during link"
 	default n
