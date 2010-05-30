@@ -890,6 +890,14 @@ config MEMCG
 	  This config option also selects MM_OWNER config option, which
 	  could in turn add some fork/exit overhead.
 
+config MEMCG_DISABLED
+	bool "Memory Resource Controller disabled by default"
+	depends on MEMCG
+	default n
+	help
+	  Disable the memory group resource controller unless explicitly
+	  enabled using the kernel parameter "cgroup_enable=memory".
+
 config MEMCG_SWAP
 	bool "Memory Resource Controller Swap Extension"
 	depends on MEMCG && SWAP

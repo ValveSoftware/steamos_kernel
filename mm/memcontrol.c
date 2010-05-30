@@ -6958,6 +6958,9 @@ static void mem_cgroup_bind(struct cgroup *root)
 
 struct cgroup_subsys mem_cgroup_subsys = {
 	.name = "memory",
+#ifdef CONFIG_MEMCG_DISABLED
+	.disabled = 1,
+#endif
 	.subsys_id = mem_cgroup_subsys_id,
 	.css_alloc = mem_cgroup_css_alloc,
 	.css_online = mem_cgroup_css_online,
