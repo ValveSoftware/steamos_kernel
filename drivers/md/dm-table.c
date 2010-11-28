@@ -542,13 +542,15 @@ int dm_set_device_limits(struct dm_target *ti, struct dm_dev *dev,
 		       (unsigned long long) start << SECTOR_SHIFT);
 
 	/*
-	 * Check if merge fn is supported.
-	 * If not we'll force DM to use PAGE_SIZE or
-	 * smaller I/O, just to be safe.
+	 * If we don't call merge_bvec_fn, we must never risk
+	 * violating it, so limit max_phys_segments to 1 lying within
+	 * a single page.
 	 */
-	if (dm_queue_merge_is_compulsory(q) && !ti->type->merge)
-		blk_limits_max_hw_sectors(limits,
-					  (unsigned int) (PAGE_SIZE >> 9));
+	if (dm_queue_merge_is_compulsory(q) && !ti->type->merge) {
+		limits->max_segments = 1;
+		limits->seg_boundary_mask = PAGE_CACHE_SIZE - 1;
+	}
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(dm_set_device_limits);
