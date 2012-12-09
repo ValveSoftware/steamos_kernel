@@ -542,9 +542,6 @@ static ssize_t pm8001_store_update_fw(struct device *cdev,
 			       pm8001_ha->dev);
 
 	if (err) {
-		PM8001_FAIL_DBG(pm8001_ha,
-			pm8001_printk("Failed to load firmware image file %s,"
-			" error %d\n", filename_ptr, err));
 		err = FAIL_OPEN_BIOS_FILE;
 		goto out1;
 	}

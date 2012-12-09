@@ -127,10 +127,8 @@ int cx25840_loadfw(struct i2c_client *client)
 		MAX_BUF_SIZE = 16;  /* cx231xx cannot accept more than 16 bytes at a time */
 	}
 
-	if (request_firmware(&fw, fwname, FWDEV(client)) != 0) {
-		v4l_err(client, "unable to open firmware %s\n", fwname);
+	if (request_firmware(&fw, fwname, FWDEV(client)) != 0)
 		return -EINVAL;
-	}
 
 	start_fw_load(client);
 

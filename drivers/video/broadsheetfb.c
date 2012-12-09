@@ -741,10 +741,8 @@ static ssize_t broadsheet_loadstore_waveform(struct device *dev,
 		return -EINVAL;
 
 	err = request_firmware(&fw_entry, "broadsheet.wbf", dev);
-	if (err < 0) {
-		dev_err(dev, "Failed to get broadsheet waveform\n");
+	if (err)
 		goto err_failed;
-	}
 
 	/* try to enforce reasonable min max on waveform */
 	if ((fw_entry->size < 8*1024) || (fw_entry->size > 64*1024)) {

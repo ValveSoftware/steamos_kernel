@@ -389,15 +389,11 @@ static int upload_dsp_code(struct snd_card *card)
 	outb(HPBLKSEL_0, chip->io + HP_BLKS);
 
 	err = request_firmware(&init_fw, INITCODEFILE, card->dev);
-	if (err < 0) {
-		printk(KERN_ERR LOGNAME ": Error loading " INITCODEFILE);
+	if (err)
 		goto cleanup1;
-	}
 	err = request_firmware(&perm_fw, PERMCODEFILE, card->dev);
-	if (err < 0) {
-		printk(KERN_ERR LOGNAME ": Error loading " PERMCODEFILE);
+	if (err)
 		goto cleanup;
-	}
 
 	memcpy_toio(chip->mappedbase, perm_fw->data, perm_fw->size);
 	if (snd_msnd_upload_host(chip, init_fw->data, init_fw->size) < 0) {

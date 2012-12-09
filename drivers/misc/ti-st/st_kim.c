@@ -301,11 +301,8 @@ static long download_firmware(struct kim_data_s *kim_gdata)
 	    request_firmware(&kim_gdata->fw_entry, bts_scr_name,
 			     &kim_gdata->kim_pdev->dev);
 	if (unlikely((err != 0) || (kim_gdata->fw_entry->data == NULL) ||
-		     (kim_gdata->fw_entry->size == 0))) {
-		pr_err(" request_firmware failed(errno %ld) for %s", err,
-			   bts_scr_name);
+		     (kim_gdata->fw_entry->size == 0)))
 		return -EINVAL;
-	}
 	ptr = (void *)kim_gdata->fw_entry->data;
 	len = kim_gdata->fw_entry->size;
 	/* bts_header to remove out magic number and

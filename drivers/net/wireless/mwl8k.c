@@ -5524,16 +5524,12 @@ static int mwl8k_firmware_load_success(struct mwl8k_priv *priv);
 static void mwl8k_fw_state_machine(const struct firmware *fw, void *context)
 {
 	struct mwl8k_priv *priv = context;
-	struct mwl8k_device_info *di = priv->device_info;
 	int rc;
 
 	switch (priv->fw_state) {
 	case FW_STATE_INIT:
-		if (!fw) {
-			printk(KERN_ERR "%s: Error requesting helper fw %s\n",
-			       pci_name(priv->pdev), di->helper_image);
+		if (!fw)
 			goto fail;
-		}
 		priv->fw_helper = fw;
 		rc = mwl8k_request_fw(priv, priv->fw_pref, &priv->fw_ucode,
 				      true);
@@ -5568,11 +5564,8 @@ static void mwl8k_fw_state_machine(const struct firmware *fw, void *context)
 		break;
 
 	case FW_STATE_LOADING_ALT:
-		if (!fw) {
-			printk(KERN_ERR "%s: Error requesting alt fw %s\n",
-			       pci_name(priv->pdev), di->helper_image);
+		if (!fw)
 			goto fail;
-		}
 		priv->fw_ucode = fw;
 		rc = mwl8k_firmware_load_success(priv);
 		if (rc)
@@ -5610,10 +5603,8 @@ retry:
 
 	/* Ask userland hotplug daemon for the device firmware */
 	rc = mwl8k_request_firmware(priv, fw_image, nowait);
-	if (rc) {
-		wiphy_err(hw->wiphy, "Firmware files not found\n");
+	if (rc)
 		return rc;
-	}
 
 	if (nowait)
 		return rc;

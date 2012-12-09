@@ -318,11 +318,8 @@ static void mwifiex_fw_dpc(const struct firmware *firmware, void *context)
 	struct mwifiex_adapter *adapter = context;
 	struct mwifiex_fw_image fw;
 
-	if (!firmware) {
-		dev_err(adapter->dev,
-			"Failed to get firmware %s\n", adapter->fw_name);
+	if (!firmware)
 		goto done;
-	}
 
 	memset(&fw, 0, sizeof(struct mwifiex_fw_image));
 	adapter->firmware = firmware;

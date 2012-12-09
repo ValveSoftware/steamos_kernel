@@ -753,10 +753,8 @@ static int wl12xx_fetch_firmware(struct wl1271 *wl, bool plt)
 
 	ret = request_firmware(&fw, fw_name, wl->dev);
 
-	if (ret < 0) {
-		wl1271_error("could not get firmware %s: %d", fw_name, ret);
+	if (ret)
 		return ret;
-	}
 
 	if (fw->size % 4) {
 		wl1271_error("firmware size is not multiple of 32 bits: %zu",

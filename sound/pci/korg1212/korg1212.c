@@ -2346,7 +2346,6 @@ static int snd_korg1212_create(struct snd_card *card, struct pci_dev *pci,
 	err = request_firmware(&dsp_code, "korg/k1212.dsp", &pci->dev);
 	if (err < 0) {
 		release_firmware(dsp_code);
-		snd_printk(KERN_ERR "firmware not available\n");
 		snd_korg1212_free(korg1212);
 		return err;
 	}

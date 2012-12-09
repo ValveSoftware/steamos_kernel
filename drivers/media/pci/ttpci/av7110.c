@@ -1531,16 +1531,9 @@ static int get_firmware(struct av7110* av7110)
 	/* request the av7110 firmware, this will block until someone uploads it */
 	ret = request_firmware(&fw, "dvb-ttpci-01.fw", &av7110->dev->pci->dev);
 	if (ret) {
-		if (ret == -ENOENT) {
-			printk(KERN_ERR "dvb-ttpci: could not load firmware,"
-			       " file not found: dvb-ttpci-01.fw\n");
-			printk(KERN_ERR "dvb-ttpci: usually this should be in "
-			       "/usr/lib/hotplug/firmware or /lib/firmware\n");
-			printk(KERN_ERR "dvb-ttpci: and can be downloaded from"
+		if (ret == -ENOENT)
+			printk(KERN_ERR "dvb-ttpci: firmware can be downloaded from"
 			       " http://www.linuxtv.org/download/dvb/firmware/\n");
-		} else
-			printk(KERN_ERR "dvb-ttpci: cannot request firmware"
-			       " (error %i)\n", ret);
 		return -EINVAL;
 	}
 

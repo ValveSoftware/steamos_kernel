@@ -672,10 +672,8 @@ static int bfusb_probe(struct usb_interface *intf, const struct usb_device_id *i
 	skb_queue_head_init(&data->pending_q);
 	skb_queue_head_init(&data->completed_q);
 
-	if (request_firmware(&firmware, "bfubase.frm", &udev->dev) < 0) {
-		BT_ERR("Firmware request failed");
+	if (request_firmware(&firmware, "bfubase.frm", &udev->dev))
 		goto done;
-	}
 
 	BT_DBG("firmware data %p size %zu", firmware->data, firmware->size);
 

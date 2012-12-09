@@ -818,11 +818,8 @@ static void cas_saturn_firmware_init(struct cas *cp)
 		return;
 
 	err = request_firmware(&fw, fw_name, &cp->pdev->dev);
-	if (err) {
-		pr_err("Failed to load firmware \"%s\"\n",
-		       fw_name);
+	if (err)
 		return;
-	}
 	if (fw->size < 2) {
 		pr_err("bogus length %zu in \"%s\"\n",
 		       fw->size, fw_name);

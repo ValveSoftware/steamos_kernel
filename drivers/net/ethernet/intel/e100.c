@@ -1293,9 +1293,6 @@ static const struct firmware *e100_request_firmware(struct nic *nic)
 
 	if (err) {
 		if (required) {
-			netif_err(nic, probe, nic->netdev,
-				  "Failed to load firmware \"%s\": %d\n",
-				  fw_name, err);
 			return ERR_PTR(err);
 		} else {
 			netif_info(nic, probe, nic->netdev,

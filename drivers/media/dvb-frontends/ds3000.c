@@ -362,12 +362,8 @@ static int ds3000_firmware_ondemand(struct dvb_frontend *fe)
 				DS3000_DEFAULT_FIRMWARE);
 	ret = request_firmware(&fw, DS3000_DEFAULT_FIRMWARE,
 				state->i2c->dev.parent);
-	printk(KERN_INFO "%s: Waiting for firmware upload(2)...\n", __func__);
-	if (ret) {
-		printk(KERN_ERR "%s: No firmware uploaded (timeout or file not "
-				"found?)\n", __func__);
+	if (ret)
 		return ret;
-	}
 
 	ret = ds3000_load_firmware(fe, fw);
 	if (ret)

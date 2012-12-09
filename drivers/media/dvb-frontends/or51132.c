@@ -341,11 +341,8 @@ static int or51132_set_parameters(struct dvb_frontend *fe)
 		printk("or51132: Waiting for firmware upload(%s)...\n",
 		       fwname);
 		ret = request_firmware(&fw, fwname, state->i2c->dev.parent);
-		if (ret) {
-			printk(KERN_WARNING "or51132: No firmware up"
-			       "loaded(timeout or file not found?)\n");
+		if (ret)
 			return ret;
-		}
 		ret = or51132_load_firmware(fe, fw);
 		release_firmware(fw);
 		if (ret) {

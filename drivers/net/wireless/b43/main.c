@@ -2158,19 +2158,8 @@ int b43_do_request_fw(struct b43_request_fw_context *ctx,
 	}
 	err = request_firmware(&ctx->blob, ctx->fwname,
 			       ctx->dev->dev->dev);
-	if (err == -ENOENT) {
-		snprintf(ctx->errors[ctx->req_type],
-			 sizeof(ctx->errors[ctx->req_type]),
-			 "Firmware file \"%s\" not found\n",
-			 ctx->fwname);
+	if (err)
 		return err;
-	} else if (err) {
-		snprintf(ctx->errors[ctx->req_type],
-			 sizeof(ctx->errors[ctx->req_type]),
-			 "Firmware file \"%s\" request failed (err=%d)\n",
-			 ctx->fwname, err);
-		return err;
-	}
 fw_ready:
 	if (ctx->blob->size < sizeof(struct b43_fw_header))
 		goto err_format;

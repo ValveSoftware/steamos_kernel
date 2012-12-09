@@ -244,10 +244,8 @@ static int sd_init(struct gspca_dev *gspca_dev)
 
 	ret = request_ihex_firmware(&fw, VICAM_FIRMWARE,
 				    &gspca_dev->dev->dev);
-	if (ret) {
-		pr_err("Failed to load \"vicam/firmware.fw\": %d\n", ret);
+	if (ret)
 		return ret;
-	}
 
 	firmware_buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!firmware_buf) {

@@ -3037,10 +3037,8 @@ static int brcmf_sdbrcm_download_code_file(struct brcmf_sdio *bus)
 
 	ret = request_firmware(&bus->firmware, BRCMF_SDIO_FW_NAME,
 			       &bus->sdiodev->func[2]->dev);
-	if (ret) {
-		brcmf_err("Fail to request firmware %d\n", ret);
+	if (ret)
 		return ret;
-	}
 	bus->fw_ptr = 0;
 
 	memptr = memblock = kmalloc(MEMBLOCK + BRCMF_SDALIGN, GFP_ATOMIC);
@@ -3159,10 +3157,8 @@ static int brcmf_sdbrcm_download_nvram(struct brcmf_sdio *bus)
 
 	ret = request_firmware(&bus->firmware, BRCMF_SDIO_NV_NAME,
 			       &bus->sdiodev->func[2]->dev);
-	if (ret) {
-		brcmf_err("Fail to request nvram %d\n", ret);
+	if (ret)
 		return ret;
-	}
 
 	ret = brcmf_process_nvram_vars(bus);
 

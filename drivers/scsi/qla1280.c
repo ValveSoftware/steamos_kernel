@@ -1560,8 +1560,6 @@ qla1280_request_firmware(struct scsi_qla_host *ha)
 	err = request_firmware(&fw, fwname, &ha->pdev->dev);
 
 	if (err) {
-		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
-		       fwname, err);
 		fw = ERR_PTR(err);
 		goto unlock;
 	}

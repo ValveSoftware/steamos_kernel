@@ -2568,10 +2568,8 @@ static int s2255_probe(struct usb_interface *interface,
 	}
 	/* load the first chunk */
 	if (request_firmware(&dev->fw_data->fw,
-			     FIRMWARE_FILE_NAME, &dev->udev->dev)) {
-		printk(KERN_ERR "sensoray 2255 failed to get firmware\n");
+			     FIRMWARE_FILE_NAME, &dev->udev->dev))
 		goto errorREQFW;
-	}
 	/* check the firmware is valid */
 	fw_size = dev->fw_data->fw->size;
 	pdata = (__le32 *) &dev->fw_data->fw->data[fw_size - 8];

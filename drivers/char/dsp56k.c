@@ -140,11 +140,8 @@ static int dsp56k_upload(u_char __user *bin, int len)
 	}
 	err = request_firmware(&fw, fw_name, &pdev->dev);
 	platform_device_unregister(pdev);
-	if (err) {
-		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
-		       fw_name, err);
+	if (err)
 		return err;
-	}
 	if (fw->size % 3) {
 		printk(KERN_ERR "Bogus length %d in image \"%s\"\n",
 		       fw->size, fw_name);

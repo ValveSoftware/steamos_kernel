@@ -852,13 +852,8 @@ static void iwl_req_fw_callback(const struct firmware *ucode_raw, void *context)
 
 	memset(&pieces, 0, sizeof(pieces));
 
-	if (!ucode_raw) {
-		if (drv->fw_index <= api_ok)
-			IWL_ERR(drv,
-				"request for firmware file '%s' failed.\n",
-				drv->firmware_name);
+	if (!ucode_raw)
 		goto try_again;
-	}
 
 	IWL_DEBUG_INFO(drv, "Loaded firmware file '%s' (%zd bytes).\n",
 		       drv->firmware_name, ucode_raw->size);

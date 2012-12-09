@@ -3669,11 +3669,8 @@ static void azx_firmware_cb(const struct firmware *fw, void *context)
 	struct azx *chip = card->private_data;
 	struct pci_dev *pci = chip->pci;
 
-	if (!fw) {
-		snd_printk(KERN_ERR SFX "%s: Cannot load firmware, aborting\n",
-			   pci_name(chip->pci));
+	if (!fw)
 		goto error;
-	}
 
 	chip->fw = fw;
 	if (!chip->disabled) {

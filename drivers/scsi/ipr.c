@@ -3907,10 +3907,8 @@ static ssize_t ipr_store_update_fw(struct device *dev,
 	len = snprintf(fname, 99, "%s", buf);
 	fname[len-1] = '\0';
 
-	if (request_firmware(&fw_entry, fname, &ioa_cfg->pdev->dev)) {
-		dev_err(&ioa_cfg->pdev->dev, "Firmware file %s not found\n", fname);
+	if (request_firmware(&fw_entry, fname, &ioa_cfg->pdev->dev))
 		return -EIO;
-	}
 
 	image_hdr = (struct ipr_ucode_image_header *)fw_entry->data;
 

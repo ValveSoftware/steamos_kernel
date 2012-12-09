@@ -558,10 +558,8 @@ int snd_mixart_setup_firmware(struct mixart_mgr *mgr)
 
 	for (i = 0; i < 3; i++) {
 		sprintf(path, "mixart/%s", fw_files[i]);
-		if (request_firmware(&fw_entry, path, &mgr->pci->dev)) {
-			snd_printk(KERN_ERR "miXart: can't load firmware %s\n", path);
+		if (request_firmware(&fw_entry, path, &mgr->pci->dev))
 			return -ENOENT;
-		}
 		/* fake hwdep dsp record */
 		err = mixart_dsp_load(mgr, i, fw_entry);
 		release_firmware(fw_entry);

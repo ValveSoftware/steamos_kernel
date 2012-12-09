@@ -5150,10 +5150,8 @@ static int hdsp_request_fw_loader(struct hdsp *hdsp)
 		return -EINVAL;
 	}
 
-	if (request_firmware(&fw, fwfile, &hdsp->pci->dev)) {
-		snd_printk(KERN_ERR "Hammerfall-DSP: cannot load firmware %s\n", fwfile);
+	if (request_firmware(&fw, fwfile, &hdsp->pci->dev))
 		return -ENOENT;
-	}
 	if (fw->size < HDSP_FIRMWARE_SIZE) {
 		snd_printk(KERN_ERR "Hammerfall-DSP: too short firmware size %d (expected %d)\n",
 			   (int)fw->size, HDSP_FIRMWARE_SIZE);

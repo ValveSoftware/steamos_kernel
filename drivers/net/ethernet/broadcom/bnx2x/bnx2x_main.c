@@ -12258,11 +12258,8 @@ static int bnx2x_init_firmware(struct bnx2x *bp)
 	BNX2X_DEV_INFO("Loading %s\n", fw_file_name);
 
 	rc = request_firmware(&bp->firmware, fw_file_name, &bp->pdev->dev);
-	if (rc) {
-		BNX2X_ERR("Can't load firmware file %s\n",
-			  fw_file_name);
+	if (rc)
 		goto request_firmware_exit;
-	}
 
 	rc = bnx2x_check_firmware(bp);
 	if (rc) {

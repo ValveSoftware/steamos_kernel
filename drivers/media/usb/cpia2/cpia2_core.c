@@ -907,11 +907,8 @@ static int apply_vp_patch(struct camera_data *cam)
 	struct cpia2_command cmd;
 
 	ret = request_firmware(&fw, fw_name, &cam->dev->dev);
-	if (ret) {
-		printk(KERN_ERR "cpia2: failed to load VP patch \"%s\"\n",
-		       fw_name);
+	if (ret)
 		return ret;
-	}
 
 	cmd.req_mode = CAMERAACCESS_TYPE_REPEAT | CAMERAACCESS_VP;
 	cmd.direction = TRANSFER_WRITE;

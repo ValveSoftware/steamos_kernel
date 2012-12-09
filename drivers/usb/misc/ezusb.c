@@ -80,12 +80,8 @@ static int ezusb_ihex_firmware_download(struct usb_device *dev,
 	const struct ihex_binrec *record;
 
 	if (request_ihex_firmware(&firmware, firmware_path,
-				  &dev->dev)) {
-		dev_err(&dev->dev,
-			"%s - request \"%s\" failed\n",
-			__func__, firmware_path);
+				  &dev->dev))
 		goto out;
-	}
 
 	ret = ezusb_set_reset(dev, fx.cpucs_reg, 0);
 	if (ret < 0)

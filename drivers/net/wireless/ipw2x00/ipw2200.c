@@ -3418,10 +3418,8 @@ static int ipw_get_fw(struct ipw_priv *priv,
 
 	/* ask firmware_class module to get the boot firmware off disk */
 	rc = request_firmware(raw, name, &priv->pci_dev->dev);
-	if (rc < 0) {
-		IPW_ERROR("%s request_firmware failed: Reason %d\n", name, rc);
+	if (rc)
 		return rc;
-	}
 
 	if ((*raw)->size < sizeof(*fw)) {
 		IPW_ERROR("%s is too small (%zd)\n", name, (*raw)->size);

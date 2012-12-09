@@ -648,10 +648,8 @@ static int osi_load_firmware(struct pcmcia_device *link)
 	int i, err;
 
 	err = request_firmware(&fw, FIRMWARE_NAME, &link->dev);
-	if (err) {
-		pr_err("Failed to load firmware \"%s\"\n", FIRMWARE_NAME);
+	if (err)
 		return err;
-	}
 
 	/* Download the Seven of Diamonds firmware */
 	for (i = 0; i < fw->size; i++) {

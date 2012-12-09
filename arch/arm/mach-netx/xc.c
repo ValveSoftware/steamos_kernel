@@ -127,10 +127,8 @@ int xc_request_firmware(struct xc *x)
 
 	ret = request_firmware(&fw, name, x->dev);
 
-	if (ret < 0) {
-		dev_err(x->dev, "request_firmware failed\n");
+	if (ret)
 		return ret;
-	}
 
 	head = (struct fw_header *)fw->data;
 	if (head->magic != 0x4e657458) {

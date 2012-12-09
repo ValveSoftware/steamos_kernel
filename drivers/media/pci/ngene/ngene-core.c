@@ -1266,13 +1266,8 @@ static int ngene_load_firm(struct ngene *dev)
 		break;
 	}
 
-	if (request_firmware(&fw, fw_name, &dev->pci_dev->dev) < 0) {
-		printk(KERN_ERR DEVICE_NAME
-			": Could not load firmware file %s.\n", fw_name);
-		printk(KERN_INFO DEVICE_NAME
-			": Copy %s to your hotplug directory!\n", fw_name);
+	if (request_firmware(&fw, fw_name, &dev->pci_dev->dev))
 		return -1;
-	}
 	if (size == 0)
 		size = fw->size;
 	if (size != fw->size) {
@@ -1280,8 +1275,6 @@ static int ngene_load_firm(struct ngene *dev)
 			": Firmware %s has invalid size!", fw_name);
 		err = -1;
 	} else {
-		printk(KERN_INFO DEVICE_NAME
-			": Loading firmware file %s.\n", fw_name);
 		ngene_fw = (u8 *) fw->data;
 		err = ngene_command_load_firmware(dev, ngene_fw, size);
 	}

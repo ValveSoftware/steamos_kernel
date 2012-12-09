@@ -1570,12 +1570,8 @@ int go7007_construct_fw_image(struct go7007 *go, u8 **fw, int *fwlen)
 	default:
 		return -1;
 	}
-	if (request_firmware(&fw_entry, GO7007_FW_NAME, go->dev)) {
-		dev_err(go->dev,
-			"unable to load firmware from file \"%s\"\n",
-			GO7007_FW_NAME);
+	if (request_firmware(&fw_entry, GO7007_FW_NAME, go->dev))
 		return -1;
-	}
 	code = kzalloc(codespace * 2, GFP_KERNEL);
 	if (code == NULL)
 		goto fw_failed;

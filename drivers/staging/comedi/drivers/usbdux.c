@@ -2376,11 +2376,8 @@ static void usbdux_firmware_request_complete_handler(const struct firmware *fw,
 	struct usb_interface *uinterf = usbduxsub_tmp->interface;
 	int ret;
 
-	if (fw == NULL) {
-		dev_err(&uinterf->dev,
-			"Firmware complete handler without firmware!\n");
+	if (fw == NULL)
 		return;
-	}
 
 	/*
 	 * we need to upload the firmware here because fw will be

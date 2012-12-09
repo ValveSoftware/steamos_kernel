@@ -49,8 +49,6 @@ short hpi_dsp_code_open(u32 adapter, void *os_data, struct dsp_code *dsp_code,
 	err = request_firmware(&firmware, fw_name, &dev->dev);
 
 	if (err || !firmware) {
-		dev_err(&dev->dev, "%d, request_firmware failed for %s\n",
-			err, fw_name);
 		goto error1;
 	}
 	if (firmware->size < sizeof(header)) {

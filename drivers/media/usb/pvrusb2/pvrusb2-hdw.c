@@ -1382,29 +1382,6 @@ static int pvr2_locate_firmware(struct pvr2_hdw *hdw,
 			   "request_firmware fatal error with code=%d",ret);
 		return ret;
 	}
-	pvr2_trace(PVR2_TRACE_ERROR_LEGS,
-		   "***WARNING***"
-		   " Device %s firmware"
-		   " seems to be missing.",
-		   fwtypename);
-	pvr2_trace(PVR2_TRACE_ERROR_LEGS,
-		   "Did you install the pvrusb2 firmware files"
-		   " in their proper location?");
-	if (fwcount == 1) {
-		pvr2_trace(PVR2_TRACE_ERROR_LEGS,
-			   "request_firmware unable to locate %s file %s",
-			   fwtypename,fwnames[0]);
-	} else {
-		pvr2_trace(PVR2_TRACE_ERROR_LEGS,
-			   "request_firmware unable to locate"
-			   " one of the following %s files:",
-			   fwtypename);
-		for (idx = 0; idx < fwcount; idx++) {
-			pvr2_trace(PVR2_TRACE_ERROR_LEGS,
-				   "request_firmware: Failed to find %s",
-				   fwnames[idx]);
-		}
-	}
 	return ret;
 }
 

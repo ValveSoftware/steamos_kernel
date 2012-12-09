@@ -397,8 +397,6 @@ static ssize_t asd_store_update_bios(struct device *dev,
 				   filename_ptr,
 				   &asd_ha->pcidev->dev);
 	if (err) {
-		asd_printk("Failed to load bios image file %s, error %d\n",
-			   filename_ptr, err);
 		err = FAIL_OPEN_BIOS_FILE;
 		goto out1;
 	}

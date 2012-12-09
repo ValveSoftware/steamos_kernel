@@ -1163,10 +1163,8 @@ static void sdma_load_firmware(const struct firmware *fw, void *context)
 	const struct sdma_script_start_addrs *addr;
 	unsigned short *ram_code;
 
-	if (!fw) {
-		dev_err(sdma->dev, "firmware not found\n");
+	if (!fw)
 		return;
-	}
 
 	if (fw->size < sizeof(*header))
 		goto err_firmware;

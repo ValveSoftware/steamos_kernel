@@ -74,12 +74,7 @@ int iop_fw_load_spu(const unsigned char *fw_name, unsigned int spu_inst)
 				  fw_name,
 				  &iop_spu_device[spu_inst]);
 	if (retval != 0)
-	{
-		printk(KERN_ERR
-		       "iop_load_spu: Failed to load firmware \"%s\"\n",
-		       fw_name);
 		return retval;
-	}
 	data = (u32 *) fw_entry->data;
 
 	/* acquire ownership of memory controller */
@@ -137,12 +132,7 @@ int iop_fw_load_mpu(unsigned char *fw_name)
 	/* get firmware */
 	retval = request_firmware(&fw_entry, fw_name, &iop_mpu_device);
 	if (retval != 0)
-	{
-		printk(KERN_ERR
-		       "iop_load_spu: Failed to load firmware \"%s\"\n",
-		       fw_name);
 		return retval;
-	}
 	data = (u32 *) fw_entry->data;
 
 	/* disable MPU */

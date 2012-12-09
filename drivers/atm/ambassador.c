@@ -1929,10 +1929,8 @@ static int ucode_init(loader_block *lb, amb_dev *dev)
   int res;
 
   res = request_ihex_firmware(&fw, "atmsar11.fw", &dev->pci_dev->dev);
-  if (res) {
-    PRINTK (KERN_ERR, "Cannot load microcode data");
+  if (res)
     return res;
-  }
 
   /* First record contains just the start address */
   rec = (const struct ihex_binrec *)fw->data;

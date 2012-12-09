@@ -995,12 +995,8 @@ static int cx231xx_load_firmware(struct cx231xx *dev)
 	retval = request_firmware(&firmware, CX231xx_FIRM_IMAGE_NAME,
 				  &dev->udev->dev);
 
-	if (retval != 0) {
-		pr_err("ERROR: Hotplug firmware request failed (%s).\n",
-			CX231xx_FIRM_IMAGE_NAME);
-		pr_err("Please fix your hotplug setup, the board will not work without firmware loaded!\n");
+	if (retval != 0)
 		return -1;
-	}
 
 	if (firmware->size != CX231xx_FIRM_IMAGE_SIZE) {
 		pr_err("ERROR: Firmware size mismatch (have %zd, expected %d)\n",

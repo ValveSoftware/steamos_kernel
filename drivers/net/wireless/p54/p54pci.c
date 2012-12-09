@@ -497,7 +497,6 @@ static void p54p_firmware_step2(const struct firmware *fw,
 	int err;
 
 	if (!fw) {
-		dev_err(&pdev->dev, "Cannot find firmware (isl3886pci)\n");
 		err = -ENOENT;
 		goto out;
 	}

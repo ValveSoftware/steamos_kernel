@@ -171,10 +171,8 @@ static int p54spi_request_firmware(struct ieee80211_hw *dev)
 	/* FIXME: should driver use it's own struct device? */
 	ret = request_firmware(&priv->firmware, "3826.arm", &priv->spi->dev);
 
-	if (ret < 0) {
-		dev_err(&priv->spi->dev, "request_firmware() failed: %d", ret);
+	if (ret)
 		return ret;
-	}
 
 	ret = p54_parse_firmware(dev, priv->firmware);
 	if (ret) {

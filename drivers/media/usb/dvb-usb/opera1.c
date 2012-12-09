@@ -452,9 +452,6 @@ static int opera1_xilinx_load_firmware(struct usb_device *dev,
 	info("start downloading fpga firmware %s",filename);
 
 	if ((ret = request_firmware(&fw, filename, &dev->dev)) != 0) {
-		err("did not find the firmware file. (%s) "
-			"Please see linux/Documentation/dvb/ for more details on firmware-problems.",
-			filename);
 		return ret;
 	} else {
 		p = kmalloc(fw->size, GFP_KERNEL);

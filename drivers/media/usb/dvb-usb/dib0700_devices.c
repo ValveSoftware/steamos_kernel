@@ -2256,12 +2256,9 @@ static int stk9090m_frontend_attach(struct dvb_usb_adapter *adap)
 
 	dib9000_i2c_enumeration(&adap->dev->i2c_adap, 1, 0x10, 0x80);
 
-	if (request_firmware(&state->frontend_firmware, "dib9090.fw", &adap->dev->udev->dev)) {
-		deb_info("%s: Upload failed. (file not found?)\n", __func__);
+	if (request_firmware(&state->frontend_firmware, "dib9090.fw", &adap->dev->udev->dev))
 		return -ENODEV;
-	} else {
-		deb_info("%s: firmware read %Zu bytes.\n", __func__, state->frontend_firmware->size);
-	}
+	deb_info("%s: firmware read %Zu bytes.\n", __func__, state->frontend_firmware->size);
 	stk9090m_config.microcode_B_fe_size = state->frontend_firmware->size;
 	stk9090m_config.microcode_B_fe_buffer = state->frontend_firmware->data;
 
@@ -2322,12 +2319,9 @@ static int nim9090md_frontend_attach(struct dvb_usb_adapter *adap)
 	msleep(20);
 	dib0700_set_gpio(adap->dev, GPIO0, GPIO_OUT, 1);
 
-	if (request_firmware(&state->frontend_firmware, "dib9090.fw", &adap->dev->udev->dev)) {
-		deb_info("%s: Upload failed. (file not found?)\n", __func__);
+	if (request_firmware(&state->frontend_firmware, "dib9090.fw", &adap->dev->udev->dev))
 		return -EIO;
-	} else {
-		deb_info("%s: firmware read %Zu bytes.\n", __func__, state->frontend_firmware->size);
-	}
+	deb_info("%s: firmware read %Zu bytes.\n", __func__, state->frontend_firmware->size);
 	nim9090md_config[0].microcode_B_fe_size = state->frontend_firmware->size;
 	nim9090md_config[0].microcode_B_fe_buffer = state->frontend_firmware->data;
 	nim9090md_config[1].microcode_B_fe_size = state->frontend_firmware->size;

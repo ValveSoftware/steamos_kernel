@@ -1554,11 +1554,8 @@ static int do_request_fw(struct b43legacy_wldev *dev,
 	} else {
 		err = request_firmware(fw, path, dev->dev->dev);
 	}
-	if (err) {
-		b43legacyerr(dev->wl, "Firmware file \"%s\" not found "
-		       "or load failed.\n", path);
+	if (err)
 		return err;
-	}
 	if ((*fw)->size < sizeof(struct b43legacy_fw_header))
 		goto err_format;
 	hdr = (struct b43legacy_fw_header *)((*fw)->data);
