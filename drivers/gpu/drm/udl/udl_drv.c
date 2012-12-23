@@ -30,7 +30,7 @@ static struct usb_device_id id_table[] = {
 			USB_DEVICE_ID_MATCH_INT_PROTOCOL,},
 	{},
 };
-MODULE_DEVICE_TABLE(usb, id_table);
+/*MODULE_DEVICE_TABLE(usb, id_table);*/
 
 MODULE_LICENSE("GPL");
 
