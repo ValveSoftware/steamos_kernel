@@ -58,7 +58,7 @@ static DEFINE_PCI_DEVICE_TABLE(pciidlist) = {
 	{0, 0, 0},
 };
 
-MODULE_DEVICE_TABLE(pci, pciidlist);
+/*MODULE_DEVICE_TABLE(pci, pciidlist);*/
 
 static int ast_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
