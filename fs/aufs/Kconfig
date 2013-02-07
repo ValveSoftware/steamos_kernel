@@ -101,6 +101,7 @@ config AUFS_RDU
 
 config AUFS_PROC_MAP
 	bool "support for /proc/maps and lsof(1)"
+	depends on BROKEN
 	depends on PROC_FS
 	help
 	When you issue mmap(2) in aufs, it is actually a direct mmap(2)
