@@ -56,6 +56,7 @@ static struct hlist_head *inode_hashtable __read_mostly;
 static __cacheline_aligned_in_smp DEFINE_SPINLOCK(inode_hash_lock);
 
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(inode_sb_list_lock);
+EXPORT_SYMBOL_GPL(inode_sb_list_lock);
 
 /*
  * Empty aops. Can be used for the cases where the user does not
@@ -1514,6 +1515,7 @@ int update_time(struct inode *inode, struct timespec *time, int flags)
 	mark_inode_dirty_sync(inode);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(update_time);
 
 /**
  *	touch_atime	-	update the access time
