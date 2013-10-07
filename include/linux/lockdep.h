@@ -541,6 +541,10 @@ static inline void print_irqtrace_events(struct task_struct *curr)
 # define rwsem_release(l, n, i)			do { } while (0)
 #endif
 
+#define seqcount_acquire(l, s, t, i)		lock_acquire_exclusive(l, s, t, NULL, i)
+#define seqcount_acquire_read(l, s, t, i)	lock_acquire_shared_recursive(l, s, t, NULL, i)
+#define seqcount_release(l, n, i)		lock_release(l, n, i)
+
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 # ifdef CONFIG_PROVE_LOCKING
 #  define lock_map_acquire(l)		lock_acquire(l, 0, 0, 0, 2, NULL, _THIS_IP_)
