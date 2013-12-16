@@ -12933,12 +12933,14 @@ static void i915_disable_vga(struct drm_device *dev)
 	u32 vga_reg = i915_vgacntrl_reg(dev);
 
 	/* WaEnableVGAAccessThroughIOPort:ctg,elk,ilk,snb,ivb,vlv,hsw */
-	vga_get_uninterruptible(dev->pdev, VGA_RSRC_LEGACY_IO);
-	outb(SR01, VGA_SR_INDEX);
-	sr1 = inb(VGA_SR_DATA);
-	outb(sr1 | 1<<5, VGA_SR_DATA);
-	vga_put(dev->pdev, VGA_RSRC_LEGACY_IO);
-	udelay(300);
+	if (dev->pdev == vga_default_device()) {
+		vga_get_uninterruptible(dev->pdev, VGA_RSRC_LEGACY_IO);
+		outb(SR01, VGA_SR_INDEX);
+		sr1 = inb(VGA_SR_DATA);
+		outb(sr1 | 1<<5, VGA_SR_DATA);
+		vga_put(dev->pdev, VGA_RSRC_LEGACY_IO);
+		udelay(300);
+	}
 
 	I915_WRITE(vga_reg, VGA_DISP_DISABLE);
 	POSTING_READ(vga_reg);
