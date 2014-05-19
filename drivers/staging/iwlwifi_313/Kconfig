@@ -1,0 +1,7 @@
+config IWLWIFI_313
+	tristate "Backported iwlwifi stack from Linux 3.13"
+	depends on PCI && WLAN
+	depends on m
+	default N
+	---help---
+	  If built as a module, it will be called iwlwifi_313.ko.
