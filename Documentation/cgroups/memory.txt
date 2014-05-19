@@ -47,6 +47,10 @@ Features:
  Kernel memory support is a work in progress, and the current version provides
  basically functionality. (See Section 2.7)
 
+NOTE: In Debian kernel packages, the memory resource controller is
+included but disabled by default.  Use the kernel parameter
+'cgroup_enable=memory' to enable it.
+
 Brief summary of control files.
 
  tasks				 # attach a task(thread) and show list of threads
