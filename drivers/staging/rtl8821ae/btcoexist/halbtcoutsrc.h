@@ -89,14 +89,15 @@ extern u32 btc_dbg_type[];
 
 #define	CL_SPRINTF	snprintf
 #define	CL_PRINTF	printk
-
+#define	BTC_PRINT(dbgtype, dbgflag, printstr, ...)
+/*
 #define	BTC_PRINT(dbgtype, dbgflag, printstr, ...)		\
 	do { 							\
 		if (unlikely(btc_dbg_type[dbgtype] & dbgflag)) {\
 			printk(printstr, ##__VA_ARGS__);	\
 		}						\
 	} while(0)
-
+*/
 #define	BTC_PRINT_F(dbgtype, dbgflag, printstr, ...)		\
 	do {							\
 		if (unlikely(btc_dbg_type[dbgtype] & dbgflag)) {\

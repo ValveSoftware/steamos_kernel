@@ -42,7 +42,7 @@ void rtl_dbgp_flag_init(struct ieee80211_hw *hw)
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	u8 i;
 
-	rtlpriv->dbg.global_debuglevel = DBG_DMESG;
+	rtlpriv->dbg.global_debuglevel = DBG_EMERG;
 
 	rtlpriv->dbg.global_debugcomponents =
 		COMP_ERR |
