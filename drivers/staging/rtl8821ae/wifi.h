@@ -94,6 +94,16 @@
 #define CHANNEL_MAX_NUMBER_5G	    	54 /* Please refer to 
 					    *"phy_GetChnlGroup8812A" and 
 					    * "Hal_ReadTxPowerInfo8812A"*/
+
+#define MAX_REGULATION_NUM			4
+#define MAX_RF_PATH_NUM	2
+#define MAX_RATE_SECTION_NUM		6
+#define MAX_2_4G_BANDWITH_NUM		2
+#define MAX_5G_BANDWITH_NUM		4
+
+
+
+
 #define CHANNEL_MAX_NUMBER_5G_80M	7			
 #define CHANNEL_GROUP_MAX		(3 + 9)	/* ch1~3, ch4~9, ch10~14
 						 * total three groups */
@@ -133,6 +143,32 @@
  *not OK yet, keep it 0*/
 #define DMA_IS_64BIT 0	
 #define RTL8192EE_SEG_NUM		1 /* 0:2 seg, 1: 4 seg, 2: 8 seg */
+
+
+#define	MAX_SUPPORT_WOL_PATTERN_NUM	16 
+#define	RSVD_WOL_PATTERN_NUM		1
+#define	WKFMCAM_ADDR_NUM		6
+#define	WKFMCAM_SIZE			24
+
+#define	MAX_WOL_BIT_MASK_SIZE		16
+/* MIN LEN keeps 13 here */
+#define	MIN_WOL_PATTERN_SIZE		13
+#define	MAX_WOL_PATTERN_SIZE		128
+
+#define	WAKE_ON_MAGIC_PACKET		BIT(0)
+#define	WAKE_ON_PATTERN_MATCH		BIT(1)
+
+#define	WOL_REASON_PTK_UPDATE		BIT(0)
+#define	WOL_REASON_GTK_UPDATE		BIT(1)
+#define	WOL_REASON_DISASSOC		BIT(2)
+#define	WOL_REASON_DEAUTH		BIT(3)
+#define	WOL_REASON_AP_LOST		BIT(4)
+#define	WOL_REASON_MAGIC_PKT		BIT(5)
+#define	WOL_REASON_UNICAST_PKT		BIT(6)
+#define	WOL_REASON_PATTERN_PKT		BIT(7)
+#define	WOL_REASON_RTD3_SSID_MATCH	BIT(8)
+#define	WOL_REASON_REALWOW_V2_WAKEUPPKT	BIT(9)
+#define	WOL_REASON_REALWOW_V2_ACKLOST	BIT(10)
 
 struct txpower_info_2g {
 	u8 index_cck_base[MAX_RF_PATH][MAX_CHNL_GROUP_24G];
@@ -188,6 +224,16 @@ enum radio_path {
 	RF90_PATH_C = 2,
 	RF90_PATH_D = 3,
 };
+
+enum regulation_txpwr_lmt {
+	TXPWR_LMT_FCC = 0,
+	TXPWR_LMT_MKK = 1,
+	TXPWR_LMT_ETSI = 2,
+	TXPWR_LMT_WW = 3,	
+	
+	TXPWR_LMT_MAX_REGULATION_NUM = 4
+};
+
 
 enum rt_eeprom_type {
 	EEPROM_93C46,
@@ -275,6 +321,7 @@ enum hw_variables {
 	HW_VAR_DEFAULTKEY2,
 	HW_VAR_DEFAULTKEY3,
 	HW_VAR_SIFS,
+	HW_VAR_R2T_SIFS,
 	HW_VAR_DIFS,
 	HW_VAR_EIFS,
 	HW_VAR_SLOT_TIME,
@@ -549,6 +596,13 @@ enum rtl_var_map {
 
 	RTL_RC_HT_RATEMCS7,
 	RTL_RC_HT_RATEMCS15,
+	
+	RTL_RC_VHT_RATE_1SS_MCS7,
+	RTL_RC_VHT_RATE_1SS_MCS8,
+	RTL_RC_VHT_RATE_1SS_MCS9,
+	RTL_RC_VHT_RATE_2SS_MCS7,
+	RTL_RC_VHT_RATE_2SS_MCS8,
+	RTL_RC_VHT_RATE_2SS_MCS9,
 
 	/*keep it last */
 	RTL_VAR_MAP_MAX,
@@ -641,7 +695,9 @@ enum wireless_mode {
 	WIRELESS_MODE_N_24G = 0x10,
 	WIRELESS_MODE_N_5G = 0x20,
 	WIRELESS_MODE_AC_5G = 0x40,
-	WIRELESS_MODE_AC_24G  = 0x80
+	WIRELESS_MODE_AC_24G  = 0x80,
+	WIRELESS_MODE_AC_ONLY  = 0x100,
+	WIRELESS_MODE_MAX  = 0x800
 };
 
 enum ratr_table_mode {
@@ -683,6 +739,29 @@ enum rt_polarity_ctl {
 	RT_POLARITY_HIGH_ACT = 1,	
 };
 
+/* After 8188E, we use V2 reason define. 88C/8723A use V1 reason. */
+enum fw_wow_reason_v2 {
+	FW_WOW_V2_PTK_UPDATE_EVENT = 0x01,
+	FW_WOW_V2_GTK_UPDATE_EVENT = 0x02,
+	FW_WOW_V2_DISASSOC_EVENT = 0x04,
+	FW_WOW_V2_DEAUTH_EVENT = 0x08,
+	FW_WOW_V2_FW_DISCONNECT_EVENT = 0x10,
+	FW_WOW_V2_MAGIC_PKT_EVENT = 0x21,
+	FW_WOW_V2_UNICAST_PKT_EVENT = 0x22,
+	FW_WOW_V2_PATTERN_PKT_EVENT = 0x23,
+	FW_WOW_V2_RTD3_SSID_MATCH_EVENT = 0x24,
+	FW_WOW_V2_REALWOW_V2_WAKEUPPKT = 0x30,
+	FW_WOW_V2_REALWOW_V2_ACKLOST = 0x31,
+	FW_WOW_V2_REASON_MAX = 0xff,
+};
+
+enum wolpattern_type {
+	UNICAST_PATTERN = 0,
+	MULTICAST_PATTERN = 1,
+	BROADCAST_PATTERN = 2,
+	DONT_CARE_DA = 3,
+	UNKNOWN_TYPE = 4,
+};
 
 struct octet_string {
 	u8 *octet;
@@ -924,6 +1003,14 @@ struct rtl_rfkill {
 	bool rfkill_state;	/*0 is off, 1 is on */
 };
 
+enum wol_pattern_type {
+	eUnicastPattern = 0,
+	eMulticastPattern = 1,
+	eBroadcastPattern = 2,
+	eDontCareDA = 3,
+	eUnknownType = 4,
+};
+
 /*for P2P PS**/
 #define	P2P_MAX_NOA_NUM		2
 
@@ -1056,6 +1143,18 @@ struct rtl_phy {
 	u8 cur_ofdm24g_txpwridx;
 	u8 cur_bw20_txpwridx;
 	u8 cur_bw40_txpwridx;
+
+	
+	char txpwr_limit_2_4g[MAX_REGULATION_NUM]
+			       [MAX_2_4G_BANDWITH_NUM]
+	                                   [MAX_RATE_SECTION_NUM]
+	                                   [CHANNEL_MAX_NUMBER_2G]
+	                                   [MAX_RF_PATH_NUM];
+	char txpwr_limit_5g[MAX_REGULATION_NUM]
+			   [MAX_5G_BANDWITH_NUM]
+			   [MAX_RATE_SECTION_NUM]
+			   [CHANNEL_MAX_NUMBER_5G]
+			   [MAX_RF_PATH_NUM];
 	
 	u32 rfreg_chnlval[2];
 	bool b_apk_done;
@@ -1068,8 +1167,6 @@ struct rtl_phy {
 
 	u8 num_total_rfpath;
 	u16 rf_pathmap;
-
-	u8 hw_rof_enable; /*Enable GPIO[9] as WL RF HW PDn source*/
 	
 	enum rt_polarity_ctl polarity_ctl;
 };
@@ -1138,6 +1235,12 @@ struct rtl_mac {
 
 	/*RDG*/
 	bool rdg_en;
+
+	/*vht support*/
+	u8 vht_enable;
+	u8 bw_80;
+	bool b_vht_ldpc_rx;
+	bool b_vht_stbc_rx;
 
 	/*AP*/
 	u8 bssid[6];
@@ -1246,6 +1349,20 @@ struct rtl_hal {
 
 	u16 rx_tag;/*for 92ee*/
 	u8 rts_en;
+
+	/*for wowlan*/
+	bool wow_enable;
+	bool b_enter_pnp_sleep;
+	bool b_wake_from_pnp_sleep;
+	bool wow_enabled;
+	__kernel_time_t last_suspend_sec;
+	u32 wowlan_fwsize;
+	u8 *p_wowlan_firmware;
+
+	u8 hw_rof_enable; /*Enable GPIO[9] as WL RF HW PDn source*/
+
+	bool real_wow_v2_enable;
+	bool re_init_llt_table;
 };
 
 struct rtl_security {
@@ -1560,6 +1677,15 @@ struct rtl_efuse {
 	u8 channel_plan;
 };
 
+struct rt_pm_wol_pattern_info {
+	u32 pattern_id;
+	u32 mask[4];
+	u16 crc_remainder;
+	u8 wfm_index; /* HW reg index */
+	enum wol_pattern_type pattern_type;
+	u8 is_user_defined;	/* 0: from OS, 1: User defined */
+};
+
 struct rtl_ps_ctl {
 	bool pwrdomain_protect;
 	bool b_in_powersavemode;
@@ -1622,6 +1748,23 @@ struct rtl_ps_ctl {
 	struct rtl_p2p_ps_info p2p_ps_info;
 	u8 pwr_mode;
 	u8 smart_ps;
+
+	/* wake up on line */
+	u8 wo_wlan_mode;
+	u8 ap_off_load_enable;
+	bool b_enter_lps_during_suspend;
+	u8 wo_wlan_lps_level;
+	bool bfw_disconnect_wakeup_enable;
+	bool bfw_rekey_wakeup_enable;
+	u8 arp_offload_enable;
+	u8 gtk_offload_enable;
+	u8 fw_ps_state;
+	u32 wakeup_reason;	/* Used for WOL, indicates the reason for waking event.*/
+	u32 sleep_mode;		/* Record the sleep mode.*/
+	u64 last_wakeup_time;	/* Record the last waking time for comparison with setting key. */
+	struct rt_pm_wol_pattern_info pm_wol_pattern_info
+					[MAX_SUPPORT_WOL_PATTERN_NUM];
+	u8 wol_pattern_num;
 };
 
 struct rtl_stats {
@@ -1665,6 +1808,7 @@ struct rtl_stats {
 	bool b_isampdu;
 	bool b_isfirst_ampdu;
 	bool rx_is40Mhzpacket;
+	u8 rx_packet_bw;
 	u32 rx_pwdb_all;
 	u8 rx_mimo_signalstrength[4];	/*in 0~100 index */
 	s8 rx_mimo_signalquality[4];
@@ -1682,6 +1826,10 @@ struct rtl_stats {
 	bool b_packet_toself;
 	bool b_packet_beacon;	/*for rssi */
 	char cck_adc_pwdb[4];	/*for rx path selection */
+
+	bool b_is_vht;
+	bool b_is_short_gi;
+	u8 vht_nss;
 
 	u8 packet_report_type;
 
@@ -1714,7 +1862,7 @@ struct rt_link_detect {
 };
 
 struct rtl_tcb_desc {
-	u8 b_packet_bw:1;
+	u8 packet_bw:2;
 	u8 b_multicast:1;
 	u8 b_broadcast:1;
 
@@ -1748,6 +1896,12 @@ struct rtl_tcb_desc {
 	/* used for hal construct pkt,
 	 * we may set desc when tx */
 	u8 self_desc;
+};
+
+struct rtl_wow_pattern {
+	u8 type;
+	u16 crc;
+	u32 mask[4];
 };
 
 struct proxim {
@@ -1853,6 +2007,7 @@ struct rtl_hal_ops {
 			      u32 cmd_len, u8 *p_cmdbuffer);
 	bool (*get_btc_status) (void);
   	u32 (*rx_command_packet_handler)(struct ieee80211_hw *hw, struct rtl_stats status, struct sk_buff *skb);
+	void (*add_wowlan_pattern) (struct ieee80211_hw *hw, struct rtl_wow_pattern *rtl_pattern, u8 index);
 };
 
 struct rtl_intf_ops {
@@ -2031,6 +2186,7 @@ struct rtl_btc_ops {
 	void (*btc_init_hal_vars) (struct rtl_priv *rtlpriv);
 	void (*btc_init_hw_config) (struct rtl_priv *rtlpriv);
 	void (*btc_ips_notify) (struct rtl_priv *rtlpriv, u8 type);
+	void (*btc_lps_notify) (struct rtl_priv *rtlpriv, u8 type);
 	void (*btc_scan_notify) (struct rtl_priv *rtlpriv, u8 scantype);
 	void (*btc_connect_notify) (struct rtl_priv *rtlpriv, u8 action);
 	void (*btc_mediastatus_notify) (struct rtl_priv *rtlpriv, 
@@ -2042,6 +2198,7 @@ struct rtl_btc_ops {
 	bool (*btc_is_limited_dig) (struct rtl_priv *rtlpriv);
 	bool (*btc_is_disable_edca_turbo) (struct rtl_priv *rtlpriv);	
 	bool (*btc_is_bt_disabled) (struct rtl_priv *rtlpriv);
+	void (*btc_special_packet_notify)(struct rtl_priv *rtlpriv, u8 pkt_type);
 };
 
 struct rtl_bt_coexist {
@@ -2108,6 +2265,12 @@ struct rtl_priv {
 	/* seperate 92ee from other ICs, 
 	  * 92ee use new trx flow. */
 	bool use_new_trx_flow;
+	
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0))
+#ifdef CONFIG_PM
+	struct wiphy_wowlan_support wowlan;
+#endif
+#endif
 	/*This must be the last item so
 	   that it points to the data allocated
 	   beyond  this structure like:
@@ -2228,7 +2391,6 @@ struct bt_coexist_info {
 	bool b_hold_for_bt_operation;
 	u8 lps_counter;
 };
-
 
 /****************************************
 	mem access macro define start
@@ -2422,6 +2584,8 @@ static inline u32 rtl_read_dword(struct rtl_priv *rtlpriv, u32 addr)
 
 static inline void rtl_write_byte(struct rtl_priv *rtlpriv, u32 addr, u8 val8)
 {
+//	printk("Write: 0x%lx 0x%lx\n", addr, val8);
+
 	rtlpriv->io.write8_async(rtlpriv, addr, val8);
 
 	if (rtlpriv->cfg->write_readback)
@@ -2430,6 +2594,7 @@ static inline void rtl_write_byte(struct rtl_priv *rtlpriv, u32 addr, u8 val8)
 
 static inline void rtl_write_word(struct rtl_priv *rtlpriv, u32 addr, u16 val16)
 {
+//	printk("Write: 0x%lx 0x%lx\n", addr, val16);
 	rtlpriv->io.write16_async(rtlpriv, addr, val16);
 
 	if (rtlpriv->cfg->write_readback)
@@ -2439,6 +2604,8 @@ static inline void rtl_write_word(struct rtl_priv *rtlpriv, u32 addr, u16 val16)
 static inline void rtl_write_dword(struct rtl_priv *rtlpriv,
 				   u32 addr, u32 val32)
 {
+//	printk("Write: 0x%lx 0x%lx\n", addr, val32);
+
 	rtlpriv->io.write32_async(rtlpriv, addr, val32);
 
 	if (rtlpriv->cfg->write_readback)

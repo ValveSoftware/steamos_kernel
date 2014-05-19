@@ -72,4 +72,7 @@ void rtl8821ae_allow_all_destaddr(struct ieee80211_hw *hw,
 										  bool write_into_reg);
 void _rtl8821ae_stop_tx_beacon(struct ieee80211_hw *hw);
 void _rtl8821ae_resume_tx_beacon(struct ieee80211_hw *hw);
+void rtl8821ae_add_wowlan_pattern(struct ieee80211_hw *hw,
+				  struct rtl_wow_pattern *rtl_pattern,
+				  u8 index);
 #endif

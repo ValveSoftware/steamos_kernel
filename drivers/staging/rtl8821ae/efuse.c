@@ -149,7 +149,7 @@ u8 efuse_read_1byte(struct ieee80211_hw *hw, u16 address)
 		return 0xFF;
 
 }
-//EXPORT_SYMBOL(efuse_read_1byte);
+EXPORT_SYMBOL(efuse_read_1byte);
 
 void efuse_write_1byte(struct ieee80211_hw *hw, u16 address, u8 value)
 {
@@ -415,6 +415,8 @@ void efuse_shadow_read(struct ieee80211_hw *hw, u8 type,
 
 }
 
+EXPORT_SYMBOL(efuse_shadow_read);
+
 void efuse_shadow_write(struct ieee80211_hw *hw, u8 type, u16 offset,
 				u32 value)
 {
@@ -517,7 +519,7 @@ void rtl_efuse_shadow_map_update(struct ieee80211_hw *hw)
 			rtlpriv->cfg->maps[EFUSE_HWSET_MAX_SIZE]);
 
 }
-//EXPORT_SYMBOL(rtl_efuse_shadow_map_update);
+EXPORT_SYMBOL(rtl_efuse_shadow_map_update);
 
 void efuse_force_write_vendor_Id(struct ieee80211_hw *hw)
 {
@@ -628,7 +630,7 @@ int efuse_one_byte_read(struct ieee80211_hw *hw, u16 addr, u8 *data)
 	}
 	return bresult;
 }
-//EXPORT_SYMBOL(efuse_one_byte_read);
+EXPORT_SYMBOL(efuse_one_byte_read);
 
 static int efuse_one_byte_write(struct ieee80211_hw *hw, u16 addr, u8 data)
 {

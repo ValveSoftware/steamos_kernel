@@ -1,3 +1,4 @@
+
 PCI_MAIN_OBJS	:= base.o	\
 		rc.o	\
 		debug.o	\
@@ -9,11 +10,8 @@ PCI_MAIN_OBJS	:= base.o	\
 		stats.o	\
 		pci.o	\
 
-BT_COEXIST_OBJS:=	btcoexist/halbtc8192e2ant.o\
-			btcoexist/halbtc8723b1ant.o\
-			btcoexist/halbtc8723b2ant.o\
-			btcoexist/halbtcoutsrc.o\
-			btcoexist/rtl_btc.o	\
+
+
 
 PCI_8821AE_HAL_OBJS:=	\
 	rtl8821ae/hw.o		\
@@ -29,6 +27,18 @@ PCI_8821AE_HAL_OBJS:=	\
 	rtl8821ae/pwrseqcmd.o	\
 	rtl8821ae/hal_btc.o	\
 	rtl8821ae/hal_bt_coexist.o	\
+
+
+
+BT_COEXIST_OBJS:=	btcoexist/halbtc8192e2ant.o\
+			btcoexist/halbtc8723b1ant.o\
+			btcoexist/halbtc8723b2ant.o\
+			btcoexist/halbtc8821a2ant.o\
+			btcoexist/halbtc8821a1ant.o\
+			btcoexist/halbtcoutsrc.o\
+			btcoexist/rtl_btc.o	\
+
+
 
 rtl8821ae-objs += $(BT_COEXIST_OBJS) $(PCI_MAIN_OBJS) $(PCI_8821AE_HAL_OBJS)
 

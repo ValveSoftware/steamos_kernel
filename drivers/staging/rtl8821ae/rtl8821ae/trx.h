@@ -178,7 +178,7 @@
 #define SET_TX_DESC_TX_SUB_CARRIER(__pdesc, __val) 		\
 	SET_BITS_TO_LE_4BYTE(__pdesc+20, 0, 4, __val)
 #define SET_TX_DESC_DATA_SHORTGI(__pdesc, __val) 	\
-	SET_BITS_TO_LE_1BYTE(__pdesc+20, 6, 1, __val)
+	SET_BITS_TO_LE_1BYTE(__pdesc+20, 4, 1, __val)
 #define SET_TX_DESC_DATA_BW(__pdesc, __val) 		\
 	SET_BITS_TO_LE_4BYTE(__pdesc+20, 5, 2, __val)
 #define SET_TX_DESC_DATA_LDPC(__pdesc, __val) 	\
@@ -302,10 +302,6 @@
 
 #define GET_RX_DESC_RXMCS(__pdesc) 				\
 	LE_BITS_TO_4BYTE(__pdesc+12, 0, 7)
-#define GET_RX_DESC_RXHT(__pdesc) 				\
-	LE_BITS_TO_4BYTE(__pdesc+12, 6, 1)
-#define GET_RX_STATUS_DESC_RX_GF(__pdesc) 				\
-	LE_BITS_TO_4BYTE(__pdesc+12, 7, 1)
 #define GET_RX_DESC_HTC(__pdesc) 				\
 	LE_BITS_TO_4BYTE(__pdesc+12, 10, 1)
 #define GET_RX_STATUS_DESC_EOSP(__pdesc)		\

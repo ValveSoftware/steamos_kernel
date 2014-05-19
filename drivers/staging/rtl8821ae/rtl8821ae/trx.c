@@ -72,7 +72,7 @@ u8 _rtl8821ae_map_hwqueue_to_fwqueue(struct sk_buff *skb, u8 hw_queue)
  * DESC_RATEMCS0-->DESC_RATEMCS15 ==> idx is 0-->15
  */
 static int _rtl8821ae_rate_mapping(struct ieee80211_hw *hw,
-	bool isht, u8 desc_rate)
+	bool isht, bool isvht, u8 desc_rate)
 {
 	int rate_idx;
 
@@ -203,6 +203,74 @@ static int _rtl8821ae_rate_mapping(struct ieee80211_hw *hw,
 			break;
 		case DESC_RATEMCS15:
 			rate_idx = 15;
+			break;
+		default:
+			rate_idx = 0;
+			break;
+		}
+	}
+
+	if (true == isvht) {
+		switch(desc_rate) {
+		case DESC_RATEVHT1SS_MCS0:
+			rate_idx = 0;
+			break;
+		case DESC_RATEVHT1SS_MCS1:
+			rate_idx = 1;
+			break;
+		case DESC_RATEVHT1SS_MCS2:
+			rate_idx = 2;
+			break;
+		case DESC_RATEVHT1SS_MCS3:
+			rate_idx = 3;
+			break;
+		case DESC_RATEVHT1SS_MCS4:
+			rate_idx = 4;
+			break;
+		case DESC_RATEVHT1SS_MCS5:
+			rate_idx = 5;
+			break;
+		case DESC_RATEVHT1SS_MCS6:
+			rate_idx = 6;
+			break;
+		case DESC_RATEVHT1SS_MCS7:
+			rate_idx = 7;
+			break;
+		case DESC_RATEVHT1SS_MCS8:
+			rate_idx = 8;
+			break;
+		case DESC_RATEVHT1SS_MCS9:
+			rate_idx = 9;
+			break;
+		case DESC_RATEVHT2SS_MCS0:
+			rate_idx = 0;
+			break;
+		case DESC_RATEVHT2SS_MCS1:
+			rate_idx = 1;
+			break;
+		case DESC_RATEVHT2SS_MCS2:
+			rate_idx = 2;
+			break;
+		case DESC_RATEVHT2SS_MCS3:
+			rate_idx = 3;
+			break;
+		case DESC_RATEVHT2SS_MCS4:
+			rate_idx = 4;
+			break;
+		case DESC_RATEVHT2SS_MCS5:
+			rate_idx = 5;
+			break;
+		case DESC_RATEVHT2SS_MCS6:
+			rate_idx = 6;
+			break;
+		case DESC_RATEVHT2SS_MCS7:
+			rate_idx = 7;
+			break;
+		case DESC_RATEVHT2SS_MCS8:
+			rate_idx = 8;
+			break;
+		case DESC_RATEVHT2SS_MCS9:
+			rate_idx = 9;
 			break;
 		default:
 			rate_idx = 0;
@@ -349,7 +417,7 @@ static void _rtl8821ae_query_rxphystatus(struct ieee80211_hw *hw,
 			if (rtlpriv->dm.brfpath_rxenable[i])
 				rf_rx_num++;
 
-			rx_pwr[i] = ((p_drvinfo->gain_trsw[i] & 0x3f) * 2) - 110;
+			rx_pwr[i] = (p_drvinfo->gain_trsw[i] & 0x7f) - 110;
 
 			/* Translate DBM to percentage. */
 			rssi = rtl_query_rxpwrpercentage(rx_pwr[i]);
@@ -373,8 +441,11 @@ static void _rtl8821ae_query_rxphystatus(struct ieee80211_hw *hw,
 		pstatus->recvsignalpower = rx_pwr_all;
 
 		/* (3)EVM of HT rate */
-		if (pstatus->b_is_ht && pstatus->rate >= DESC_RATEMCS8 &&
-		    pstatus->rate <= DESC_RATEMCS15)
+		if ( (pstatus->b_is_ht && pstatus->rate >= DESC_RATEMCS8 &&
+		    pstatus->rate <= DESC_RATEMCS15) 
+		    || (pstatus->b_is_vht 
+		    && pstatus->rate >= DESC_RATEVHT2SS_MCS0
+		    && pstatus->rate <= DESC_RATEVHT2SS_MCS9))
 			max_spatial_stream = 2;
 		else
 			max_spatial_stream = 1;
@@ -532,13 +603,60 @@ static void _rtl8821ae_insert_emcontent(struct rtl_tcb_desc *ptcb_desc,
 	SET_EARLYMODE_LEN4(virtualaddress, dwtmp);
 }
 
+bool rtl8821ae_get_rxdesc_is_ht(struct ieee80211_hw *hw, u8 *pdesc)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	u8 rx_rate = 0;
+
+	rx_rate = GET_RX_DESC_RXMCS(pdesc);
+
+	RT_TRACE(COMP_RXDESC,DBG_LOUD, ("rx_rate=0x%02x.\n", rx_rate));
+	
+	if ((rx_rate >= DESC_RATEMCS0) && (rx_rate <= DESC_RATEMCS15))
+		return true;
+	else
+		return false;
+}
+
+
+bool rtl8821ae_get_rxdesc_is_vht(struct ieee80211_hw *hw, u8 *pdesc)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	u8 rx_rate = 0;
+
+	rx_rate = GET_RX_DESC_RXMCS(pdesc);
+
+	RT_TRACE(COMP_RXDESC,DBG_LOUD, ("rx_rate=0x%02x.\n", rx_rate));
+	
+	if (rx_rate >= DESC_RATEVHT1SS_MCS0)
+		return true;
+	else
+		return false;
+}
+
+u8 rtl8821ae_get_rx_vht_nss(struct ieee80211_hw *hw, u8 *pdesc)
+{
+	u8 rx_rate = 0;
+	u8 vht_nss = 0;
+
+	rx_rate = GET_RX_DESC_RXMCS(pdesc);
+	if ((rx_rate >= DESC_RATEVHT1SS_MCS0)
+		&& (rx_rate <= DESC_RATEVHT1SS_MCS9))
+		vht_nss = 1;
+	else if ((rx_rate >= DESC_RATEVHT2SS_MCS0)
+		&& (rx_rate <= DESC_RATEVHT2SS_MCS9))
+		vht_nss = 2;
+
+	return vht_nss;
+}
+
+
 bool rtl8821ae_rx_query_desc(struct ieee80211_hw *hw,
 			   struct rtl_stats *status,
 			   struct ieee80211_rx_status *rx_status,
 			   u8 *pdesc, struct sk_buff *skb)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
-	struct rtl_dm *rtldm = rtl_dm(rtl_priv(hw));
 	struct rx_fwinfo_8821ae *p_drvinfo;
 	struct ieee80211_hdr *hdr;
 
@@ -557,11 +675,20 @@ bool rtl8821ae_rx_query_desc(struct ieee80211_hw *hw,
 	status->b_isampdu = (bool) (GET_RX_DESC_PAGGR(pdesc) == 1);
 	status->b_isfirst_ampdu = (bool) (GET_RX_DESC_PAGGR(pdesc) == 1);
 	status->timestamp_low = GET_RX_DESC_TSFL(pdesc);
-	status->rx_is40Mhzpacket = (bool) GET_RX_DESC_BW(pdesc);
+	status->rx_packet_bw = GET_RX_DESC_BW(pdesc);
 	status->macid = GET_RX_DESC_MACID(pdesc);
-	status->b_is_ht = (bool)GET_RX_DESC_RXHT(pdesc);
-
+	status->b_is_short_gi = !(bool)GET_RX_DESC_SPLCP(pdesc);
+	status->b_is_ht = rtl8821ae_get_rxdesc_is_ht(hw, pdesc);
+	status->b_is_vht = rtl8821ae_get_rxdesc_is_vht(hw, pdesc);
+	status->vht_nss = rtl8821ae_get_rx_vht_nss(hw, pdesc);
 	status->b_is_cck = RX_HAL_IS_CCK_RATE(status->rate);
+
+	RT_TRACE(COMP_RXDESC,DBG_LOUD, ("rx_packet_bw"
+		"=%s,b_is_ht %d, b_is_vht %d, vht_nss=%d,b_is_short_gi %d.\n", 
+		(status->rx_packet_bw == 2) ? "80M" : 
+		(status->rx_packet_bw == 1) ? "40M" : "20M", 
+		status->b_is_ht, status->b_is_vht, status->vht_nss, 
+		status->b_is_short_gi));
 
 	if (GET_RX_STATUS_DESC_RPT_SEL(pdesc))
 		status->packet_report_type = C2H_PACKET;
@@ -594,11 +721,25 @@ bool rtl8821ae_rx_query_desc(struct ieee80211_hw *hw,
 	if (status->b_crc)
 		rx_status->flag |= RX_FLAG_FAILED_FCS_CRC;
 
-	if (status->rx_is40Mhzpacket)
+
+	if (status->rx_packet_bw == HT_CHANNEL_WIDTH_20_40)
 		rx_status->flag |= RX_FLAG_40MHZ;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
+	else if (status->rx_packet_bw == HT_CHANNEL_WIDTH_80)
+		rx_status->flag |= RX_FLAG_80MHZ;
+#endif
 
 	if (status->b_is_ht)
 		rx_status->flag |= RX_FLAG_HT;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
+	if (status->b_is_vht)
+		rx_status->flag |= RX_FLAG_VHT;
+#endif
+
+	if (status->b_is_short_gi)
+		rx_status->flag |= RX_FLAG_SHORT_GI;
+
+	rx_status->vht_nss = status->vht_nss;
 
 	rx_status->flag |= RX_FLAG_MACTIME_MPDU;
 
@@ -617,19 +758,19 @@ bool rtl8821ae_rx_query_desc(struct ieee80211_hw *hw,
 				return false;
 		}
 		
-		if ((ieee80211_is_robust_mgmt_frame(hdr)) &&
+		if ((!ieee80211_is_robust_mgmt_frame(hdr)) &&
 			(ieee80211_has_protected(hdr->frame_control)))
-			rx_status->flag &= ~RX_FLAG_DECRYPTED;
-		else
 			rx_status->flag |= RX_FLAG_DECRYPTED;
+		else
+			rx_status->flag &= ~RX_FLAG_DECRYPTED;
 	}
 
 	/* rate_idx: index of data rate into band's
 	 * supported rates or MCS index if HT rates
 	 * are use (RX_FLAG_HT)*/
 	/* Notice: this is diff with windows define */
-	rx_status->rate_idx = _rtl8821ae_rate_mapping(hw,
-				status->b_is_ht, status->rate);
+	rx_status->rate_idx = _rtl8821ae_rate_mapping(hw,status->b_is_ht, 
+					status->b_is_vht, status->rate);
 
 	rx_status->mactime = status->timestamp_low;
 	if (phystatus == true) {
@@ -650,6 +791,119 @@ bool rtl8821ae_rx_query_desc(struct ieee80211_hw *hw,
 	}
 	return true;
 }
+
+u8 rtl8821ae_bw_mapping(struct ieee80211_hw *hw, struct rtl_tcb_desc *ptcb_desc)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_phy *rtlphy = &(rtlpriv->phy);
+	u8 bw_setting_of_desc = 0;
+
+	RT_TRACE(COMP_SEND, DBG_TRACE,("rtl8821ae_bw_mapping,"
+		"current_chan_bw %d, packet_bw %d \n", 
+		rtlphy->current_chan_bw, ptcb_desc->packet_bw));
+
+	if (rtlphy->current_chan_bw == HT_CHANNEL_WIDTH_80) {
+		if (ptcb_desc->packet_bw == HT_CHANNEL_WIDTH_80)
+			bw_setting_of_desc= 2;
+		else if(ptcb_desc->packet_bw == HT_CHANNEL_WIDTH_20_40)
+			bw_setting_of_desc = 1;
+		else
+			bw_setting_of_desc = 0;
+	} else if (rtlphy->current_chan_bw == HT_CHANNEL_WIDTH_20_40) {
+		if ((ptcb_desc->packet_bw == HT_CHANNEL_WIDTH_20_40) 
+			|| (ptcb_desc->packet_bw == HT_CHANNEL_WIDTH_80))
+			bw_setting_of_desc = 1;
+		else
+			bw_setting_of_desc = 0;
+	} else
+		bw_setting_of_desc = 0;
+
+	return bw_setting_of_desc;
+}
+
+u8 rtl8821ae_sc_mapping(struct ieee80211_hw *hw, struct rtl_tcb_desc *ptcb_desc)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_phy *rtlphy = &(rtlpriv->phy);
+	struct rtl_mac *mac = rtl_mac(rtlpriv);
+	u8 sc_setting_of_desc = 0;
+	
+	if (rtlphy->current_chan_bw == HT_CHANNEL_WIDTH_80) {
+		if (ptcb_desc->packet_bw == HT_CHANNEL_WIDTH_80) {
+			sc_setting_of_desc = VHT_DATA_SC_DONOT_CARE;
+		} else if(ptcb_desc->packet_bw == HT_CHANNEL_WIDTH_20_40) {
+			if (mac->cur_80_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_LOWER)
+				sc_setting_of_desc = 
+					VHT_DATA_SC_40_LOWER_OF_80MHZ;
+			else if (mac->cur_80_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_UPPER)
+				sc_setting_of_desc = 
+					VHT_DATA_SC_40_UPPER_OF_80MHZ;
+			else
+				RT_TRACE(COMP_SEND,DBG_LOUD, 
+				("rtl8821ae_sc_mapping: "
+				"Not Correct Primary40MHz Setting \n"));
+		} else {
+			if ((mac->cur_40_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_LOWER) 
+				&& (mac->cur_80_prime_sc  == 
+				HAL_PRIME_CHNL_OFFSET_LOWER))
+				sc_setting_of_desc = 
+					VHT_DATA_SC_20_LOWEST_OF_80MHZ;
+			else if ((mac->cur_40_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_UPPER) 
+				&& (mac->cur_80_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_LOWER))
+				sc_setting_of_desc = 
+					VHT_DATA_SC_20_LOWER_OF_80MHZ;
+			else if ((mac->cur_40_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_LOWER) 
+				&& (mac->cur_80_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_UPPER))
+				sc_setting_of_desc = 
+					VHT_DATA_SC_20_UPPER_OF_80MHZ;
+			else if ((mac->cur_40_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_UPPER) 
+				&& (mac->cur_80_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_UPPER))
+				sc_setting_of_desc = 
+					VHT_DATA_SC_20_UPPERST_OF_80MHZ;
+			else
+				RT_TRACE(COMP_SEND,DBG_LOUD,
+				("rtl8821ae_sc_mapping: "
+				"Not Correct Primary40MHz Setting \n"));
+		}
+	} else if (rtlphy->current_chan_bw== HT_CHANNEL_WIDTH_20_40) {
+		if (ptcb_desc->packet_bw == HT_CHANNEL_WIDTH_20_40)
+		{
+			sc_setting_of_desc = VHT_DATA_SC_DONOT_CARE;
+		} else if(ptcb_desc->packet_bw == HT_CHANNEL_WIDTH_20) {
+			if(mac->cur_40_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_UPPER) {
+				sc_setting_of_desc = 
+					VHT_DATA_SC_20_UPPER_OF_80MHZ;
+			}
+			else if (mac->cur_40_prime_sc == 
+				HAL_PRIME_CHNL_OFFSET_LOWER){
+				sc_setting_of_desc = 
+					VHT_DATA_SC_20_LOWER_OF_80MHZ;
+			} else {
+				sc_setting_of_desc = VHT_DATA_SC_DONOT_CARE;
+			}
+				
+		}
+	}
+	else
+	{
+		sc_setting_of_desc = VHT_DATA_SC_DONOT_CARE;
+	}
+
+
+	return sc_setting_of_desc;
+}
+
+
 
 /*<delete in kernel start>*/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0))
@@ -689,16 +943,17 @@ void rtl8821ae_tx_fill_desc(struct ieee80211_hw *hw,
 	bool b_lastseg = ((hdr->frame_control &
 			   cpu_to_le16(IEEE80211_FCTL_MOREFRAGS)) == 0);
 	dma_addr_t mapping;
-	u8 bw_40 = 0;
 	u8 short_gi = 0;
 
-	if (mac->opmode == NL80211_IFTYPE_STATION) {
-		bw_40 = mac->bw_40;
-	} else if (mac->opmode == NL80211_IFTYPE_AP ||
-		mac->opmode == NL80211_IFTYPE_ADHOC) {
-		if (sta)
-			bw_40 = sta->ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40;
+#if 0
+	static unsigned long last_packet_jiffies = jiffies;
+
+	if (ieee80211_is_data_qos(fc)) {
+		printk("packet delta time is %d\n", jiffies_to_usecs(jiffies - last_packet_jiffies));
+		last_packet_jiffies = jiffies;
 	}
+#endif
+
 	seq_number = (le16_to_cpu(hdr->seq_ctrl) & IEEE80211_SCTL_SEQ) >> 4;
 	rtl_get_tcb_desc(hw, info, sta, skb, ptcb_desc);
 	/* reserve 8 byte for AMPDU early mode */
@@ -744,7 +999,7 @@ void rtl8821ae_tx_fill_desc(struct ieee80211_hw *hw,
 
 		if (info->flags & IEEE80211_TX_CTL_AMPDU) {
 			SET_TX_DESC_AGG_ENABLE(pdesc, 1);
-			SET_TX_DESC_MAX_AGG_NUM(pdesc, 0x14);
+			SET_TX_DESC_MAX_AGG_NUM(pdesc, 0x1f);
 		}
 		SET_TX_DESC_SEQ(pdesc, seq_number);
 		SET_TX_DESC_RTS_ENABLE(pdesc, ((ptcb_desc->b_rts_enable &&
@@ -763,18 +1018,12 @@ void rtl8821ae_tx_fill_desc(struct ieee80211_hw *hw,
 		if(ptcb_desc->btx_enable_sw_calc_duration)
 			SET_TX_DESC_NAV_USE_HDR(pdesc, 1);
 
-		if (bw_40) {
-			if (ptcb_desc->b_packet_bw) {
-				SET_TX_DESC_DATA_BW(pdesc, 1);
-				SET_TX_DESC_TX_SUB_CARRIER(pdesc, 3);
-			} else {
-				SET_TX_DESC_DATA_BW(pdesc, 0);
-				SET_TX_DESC_TX_SUB_CARRIER(pdesc, mac->cur_40_prime_sc);
-			}
-		} else {
-			SET_TX_DESC_DATA_BW(pdesc, 0);
-			SET_TX_DESC_TX_SUB_CARRIER(pdesc, 0);
-		}
+		
+		SET_TX_DESC_DATA_BW(pdesc, 
+			rtl8821ae_bw_mapping(hw, ptcb_desc));
+		
+		SET_TX_DESC_TX_SUB_CARRIER(pdesc, 
+			rtl8821ae_sc_mapping(hw, ptcb_desc));
 
 		SET_TX_DESC_LINIP(pdesc, 0);
 		SET_TX_DESC_PKT_SIZE(pdesc, (u16) skb_len);
@@ -827,11 +1076,13 @@ void rtl8821ae_tx_fill_desc(struct ieee80211_hw *hw,
 		SET_TX_DESC_USE_RATE(pdesc, ptcb_desc->use_driver_rate ? 1 : 0);
 
 #if 0
-		SET_TX_DESC_USE_RATE(pdesc, 1);
-		SET_TX_DESC_TX_RATE(pdesc, 0x04);
+		if (ieee80211_is_data_qos(fc)) {
+			SET_TX_DESC_USE_RATE(pdesc, 1);
+			SET_TX_DESC_TX_RATE(pdesc, DESC_RATEVHT2SS_MCS9);
 
-		SET_TX_DESC_RETRY_LIMIT_ENABLE(pdesc, 1);
-		SET_TX_DESC_DATA_RETRY_LIMIT(pdesc, 0x3f);
+		//	SET_TX_DESC_RETRY_LIMIT_ENABLE(pdesc, 1);
+		//	SET_TX_DESC_DATA_RETRY_LIMIT(pdesc, 0x3f);
+		}
 #endif
 
 		/*SET_TX_DESC_PWR_STATUS(pdesc, pwr_status);*/

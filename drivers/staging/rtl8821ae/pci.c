@@ -1019,10 +1019,10 @@ static irqreturn_t _rtl_pci_interrupt(int irq, void *dev_id)
 	spin_lock_irqsave(&rtlpriv->locks.irq_th_lock,flags);
 
 
-	rtl_write_dword(rtlpriv, rtlpriv->cfg->maps[MAC_HIMR], 0x0);
+//	rtl_write_dword(rtlpriv, rtlpriv->cfg->maps[MAC_HIMR], 0x0); // jx
 	
 
-	rtl_write_dword(rtlpriv, rtlpriv->cfg->maps[MAC_HIMRE], 0x0);
+//	rtl_write_dword(rtlpriv, rtlpriv->cfg->maps[MAC_HIMRE], 0x0);
 
 
 	/*read ISR: 4/8bytes */
@@ -1152,10 +1152,10 @@ static irqreturn_t _rtl_pci_interrupt(int irq, void *dev_id)
 	if(rtlpriv->rtlhal.b_earlymode_enable)
 		tasklet_schedule(&rtlpriv->works.irq_tasklet);
 
-	rtl_write_dword(rtlpriv, rtlpriv->cfg->maps[MAC_HIMR],
-			rtlpci->irq_mask[0]);
-	rtl_write_dword(rtlpriv, rtlpriv->cfg->maps[MAC_HIMRE],
-			rtlpci->irq_mask[1]);
+//	rtl_write_dword(rtlpriv, rtlpriv->cfg->maps[MAC_HIMR],  // jx
+//			rtlpci->irq_mask[0]);
+//	rtl_write_dword(rtlpriv, rtlpriv->cfg->maps[MAC_HIMRE],
+//			rtlpci->irq_mask[1]);
 	spin_unlock_irqrestore(&rtlpriv->locks.irq_th_lock, flags);
 	
 	return IRQ_HANDLED;
@@ -1905,6 +1905,12 @@ int rtl_pci_start(struct ieee80211_hw *hw)
 	rtl_pci_reset_trx_ring(hw);
 
 	rtlpriv->rtlhal.driver_is_goingto_unload = false;
+
+	if (rtlpriv->cfg->ops->get_btc_status()) {
+		rtlpriv->btcoexist.btc_ops->btc_init_variables(rtlpriv);
+		rtlpriv->btcoexist.btc_ops->btc_init_hal_vars(rtlpriv);
+	}
+
 	err = rtlpriv->cfg->ops->hw_init(hw);
 	if (err) {
 		RT_TRACE(COMP_INIT, DBG_DMESG,
@@ -1934,6 +1940,11 @@ void rtl_pci_stop(struct ieee80211_hw *hw)
 	struct rtl_ps_ctl *ppsc = rtl_psc(rtl_priv(hw));
 	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
 	u8 RFInProgressTimeOut = 0;
+
+	if (rtlpriv->cfg->ops->get_btc_status()) {
+		rtlpriv->btcoexist.btc_ops->btc_halt_notify();
+	}
+
 
 	/*
 	 *should before disable interrrupt&adapter
@@ -2428,13 +2439,13 @@ fail1:
 	return -ENODEV;
 
 }
-//EXPORT_SYMBOL(rtl_pci_probe);
+EXPORT_SYMBOL(rtl_pci_probe);
 
 struct ieee80211_hw *rtl_pci_get_hw_pointer(void)
 {
 	return hw_export;
 }
-//EXPORT_SYMBOL(rtl_pci_get_hw_pointer);
+EXPORT_SYMBOL(rtl_pci_get_hw_pointer);
 
 void rtl_pci_disconnect(struct pci_dev *pdev)
 {
@@ -2491,7 +2502,7 @@ void rtl_pci_disconnect(struct pci_dev *pdev)
 
 	ieee80211_free_hw(hw);
 }
-//EXPORT_SYMBOL(rtl_pci_disconnect);
+EXPORT_SYMBOL(rtl_pci_disconnect);
 
 /***************************************
 kernel pci power state define:
@@ -2519,7 +2530,7 @@ int rtl_pci_suspend(struct device *dev)
 
 	return 0;
 }
-//EXPORT_SYMBOL(rtl_pci_suspend);
+EXPORT_SYMBOL(rtl_pci_suspend);
 
 int rtl_pci_resume(struct device *dev)
 {
@@ -2532,7 +2543,7 @@ int rtl_pci_resume(struct device *dev)
 	
 	return 0;
 }
-//EXPORT_SYMBOL(rtl_pci_resume);
+EXPORT_SYMBOL(rtl_pci_resume);
 
 struct rtl_intf_ops rtl_pci_ops = {
 	.read_efuse_byte = read_efuse_byte,

@@ -63,10 +63,13 @@ static void rtl_op_stop(struct ieee80211_hw *hw)
 	struct rtl_mac *mac = rtl_mac(rtl_priv(hw));
 	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
 	struct rtl_ps_ctl *ppsc = rtl_psc(rtl_priv(hw));
+	bool b_support_remote_wakeup = false;
 
 	if (is_hal_stop(rtlhal))
 		return;
 
+	rtlpriv->cfg->ops->get_hw_reg(hw, HAL_DEF_WOWLAN,
+				      (u8 *) (&b_support_remote_wakeup));
 	/* here is must, because adhoc do stop and start,
 	 * but stop with RFOFF may cause something wrong,
 	 * like adhoc TP */
@@ -74,15 +77,18 @@ static void rtl_op_stop(struct ieee80211_hw *hw)
 		rtl_ips_nic_on(hw);
 
 	mutex_lock(&rtlpriv->locks.conf_mutex);
+	/* if wowlan supported, DON'T clear connected info */
+	if (!(b_support_remote_wakeup &&
+	      rtlhal->b_enter_pnp_sleep)) {
+		mac->link_state = MAC80211_NOLINK;
+		memset(mac->bssid, 0, 6);
+		mac->vendor = PEER_UNKNOWN;
 
-	mac->link_state = MAC80211_NOLINK;
-	memset(mac->bssid, 0, 6);
-	mac->vendor = PEER_UNKNOWN;
+		/* reset sec info */
+		rtl_cam_reset_sec_info(hw);
 
-	/*reset sec info */
-	rtl_cam_reset_sec_info(hw);
-
-	rtl_deinit_deferred_work(hw);
+		rtl_deinit_deferred_work(hw);
+	}
 	rtlpriv->intf_ops->adapter_stop(hw);
 
 	mutex_unlock(&rtlpriv->locks.conf_mutex);
@@ -330,7 +336,224 @@ static int rtl_op_change_interface(struct ieee80211_hw *hw,
 }
 /*<delete in kernel start>*/
 #endif
-/*<delete in kernel end>*/	
+/*<delete in kernel end>*/
+
+#ifdef CONFIG_PM
+u16 crc16_ccitt(u8 data, u16 crc)
+{
+	u8 shift_in, data_bit, crc_bit11, crc_bit4, crc_bit15 ;
+	u8 i;
+	u16 result;
+
+	for (i = 0; i < 8; i++) {
+		crc_bit15 = ((crc & BIT(15)) ? 1 : 0);
+		data_bit  =(data & (BIT(0) << i) ? 1 : 0);
+		shift_in = crc_bit15 ^ data_bit;
+		
+		result = crc << 1;
+		if (shift_in == 0)
+			result &= (~BIT(0)); 
+		else
+			result |= BIT(0);
+
+		crc_bit11 = ((crc & BIT(11)) ? 1 : 0) ^ shift_in;
+		if (crc_bit11 == 0)
+			result &= (~BIT(12)); 
+		else
+			result |= BIT(12);
+
+		crc_bit4 = ((crc & BIT(4)) ? 1 : 0) ^ shift_in;
+		if (crc_bit4 == 0)
+			result &= (~BIT(5)); 
+		else
+			result |= BIT(5);
+
+		crc = result;
+	}
+
+	return crc;
+}
+
+u16 _calculate_wol_pattern_crc(u8 *pattern, u16 len)
+{
+	u16 crc = 0xffff;
+	u32 i;
+	
+	for (i = 0; i < len; i++) {
+		crc = crc16_ccitt(pattern[i], crc);
+	}
+	crc = ~crc; 
+
+	return crc;
+}
+
+static void _rtl_add_wowlan_patterns(struct ieee80211_hw *hw,
+				     struct cfg80211_wowlan *wow)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_mac *mac = &(rtlpriv->mac80211);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0))
+	struct cfg80211_pkt_pattern *patterns = wow->patterns;
+#else
+	struct cfg80211_wowlan_trig_pkt_pattern *patterns = wow->patterns;
+#endif
+	struct rtl_wow_pattern rtl_pattern;
+	u8 *pattern_os, *mask_os;
+	u8 mask[MAX_WOL_BIT_MASK_SIZE] = {0};
+	u8 content[MAX_WOL_PATTERN_SIZE] = {0};
+	u8 broadcast_addr[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+	u8 multicast_addr1[2] = {0x33, 0x33};
+	u8 multicast_addr2[3] = {0x01, 0x00, 0x5e};
+	u8 i, mask_len;
+	u16 j, len;
+
+	for (i = 0; i < wow->n_patterns; i++) {
+		memset(&rtl_pattern, 0, sizeof(struct rtl_wow_pattern));
+		memset(mask, 0, MAX_WOL_BIT_MASK_SIZE);
+		if (patterns[i].pattern_len > MAX_WOL_PATTERN_SIZE) {
+			RT_TRACE(COMP_POWER, DBG_WARNING,
+				 ("Pattern[%d] is too long\n",i));
+			continue;
+		}
+		pattern_os = patterns[i].pattern;
+		mask_len = DIV_ROUND_UP(patterns[i].pattern_len, 8);
+		mask_os = patterns[i].mask;
+		RT_PRINT_DATA(rtlpriv, COMP_POWER, DBG_TRACE,
+			      ("pattern content\n"), pattern_os,
+			       patterns[i].pattern_len);
+		RT_PRINT_DATA(rtlpriv, COMP_POWER, DBG_TRACE,
+			      ("mask content\n"), mask_os, mask_len);
+		/* 1. unicast? multicast? or broadcast? */
+		if (memcmp(pattern_os, broadcast_addr, 6) == 0)
+			rtl_pattern.type = BROADCAST_PATTERN;
+		else if (memcmp(pattern_os, multicast_addr1, 2) == 0 ||
+			 memcmp(pattern_os, multicast_addr2, 3) == 0)
+			rtl_pattern.type = MULTICAST_PATTERN;
+		else if  (memcmp(pattern_os, mac->mac_addr, 6) == 0)
+			rtl_pattern.type = UNICAST_PATTERN;
+		else
+			rtl_pattern.type = UNKNOWN_TYPE;
+		
+		/* 2. translate mask_from_os to mask_for_hw */
+
+/******************************************************************************
+ * pattern from OS uses 'ethenet frame', like this:
+  
+		   |    6   |    6   |   2  |     20    |  Variable  |	4  |
+		   |--------+--------+------+-----------+------------+-----|
+		   |    802.3 Mac Header    | IP Header | TCP Packet | FCS |
+		   |   DA   |   SA   | Type |
+		   
+ * BUT, packet catched by our HW is in '802.11 frame', begin from LLC,
+		   
+	|     24 or 30      |    6   |   2  |     20    |  Variable  |  4  |
+	|-------------------+--------+------+-----------+------------+-----|
+	| 802.11 MAC Header |       LLC     | IP Header | TCP Packet | FCS |
+			    | Others | Tpye |
+
+ * Therefore, we need translate mask_from_OS to mask_to_hw.
+ * We should left-shift mask by 6 bits, then set the new bit[0~5] = 0,
+ * because new mask[0~5] means 'SA', but our HW packet begins from LLC,
+ * bit[0~5] corresponds to first 6 Bytes in LLC, they just don't match.
+ ******************************************************************************/
+ 
+		/* Shift 6 bits */
+	 	for (j = 0; j < mask_len - 1; j++) {
+			mask[j] = mask_os[j] >> 6;
+			mask[j] |= (mask_os[j + 1] & 0x3F) << 2;
+		}
+		mask[j] = (mask_os[j] >> 6) & 0x3F;
+		/* Set bit 0-5 to zero */
+		mask[0] &= 0xC0; 
+
+		RT_PRINT_DATA(rtlpriv, COMP_POWER, DBG_TRACE,
+			      ("mask to hw\n"), mask, mask_len);
+		for (j = 0; j < (MAX_WOL_BIT_MASK_SIZE + 1) / 4; j++) {
+			rtl_pattern.mask[j] = mask[j * 4];
+			rtl_pattern.mask[j] |= (mask[j * 4 + 1] << 8);
+			rtl_pattern.mask[j] |= (mask[j * 4 + 2] << 16);
+			rtl_pattern.mask[j] |= (mask[j * 4 + 3] << 24);
+		}
+
+		/* To get the wake up pattern from the mask.
+		 * We do not count first 12 bits which means
+		 * DA[6] and SA[6] in the pattern to match HW design. */
+		len = 0;
+		for (j = 12; j < patterns[i].pattern_len; j++) {
+			if ((mask_os[j / 8] >> (j % 8)) & 0x01) {
+				content[len] = pattern_os[j];
+				len++;
+			}
+		}
+
+		RT_PRINT_DATA(rtlpriv, COMP_POWER, DBG_TRACE,
+			      ("pattern to hw\n"), content, len);
+		/* 3. calculate crc */
+		rtl_pattern.crc = _calculate_wol_pattern_crc(content, len);
+		RT_TRACE(COMP_POWER, DBG_TRACE,
+			 ("CRC_Remainder = 0x%x", rtl_pattern.crc));
+
+		/* 4. write crc & mask_for_hw to hw */
+		rtlpriv->cfg->ops->add_wowlan_pattern(hw, &rtl_pattern, i);
+	}
+	rtl_write_byte(rtlpriv, 0x698, wow->n_patterns);
+}
+
+static int rtl_op_suspend(struct ieee80211_hw *hw,
+			  struct cfg80211_wowlan *wow)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_hal *rtlhal = rtl_hal(rtlpriv);
+	struct rtl_ps_ctl *ppsc = rtl_psc(rtl_priv(hw));
+	struct timeval ts;
+
+	RT_TRACE(COMP_POWER, DBG_DMESG, ("\n"));
+	if (WARN_ON(!wow))
+	return -EINVAL;
+
+	/* to resolve s4 can not wake up*/
+	do_gettimeofday(&ts);
+	rtlhal->last_suspend_sec = ts.tv_sec;
+
+	if ((ppsc->wo_wlan_mode | WAKE_ON_PATTERN_MATCH) && wow->n_patterns)
+		_rtl_add_wowlan_patterns(hw, wow);
+	
+	rtlhal->driver_is_goingto_unload = true;
+	rtlhal->b_enter_pnp_sleep = true;
+
+	rtl_lps_leave(hw);
+	rtl_op_stop(hw);
+	device_set_wakeup_enable(wiphy_dev(hw->wiphy), true);
+	return 0;
+}
+
+static int rtl_op_resume(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_hal *rtlhal = rtl_hal(rtlpriv);
+	struct rtl_ps_ctl *ppsc = rtl_psc(rtl_priv(hw));
+	struct rtl_mac *mac = rtl_mac(rtl_priv(hw));
+	struct timeval ts;
+
+	RT_TRACE(COMP_POWER, DBG_DMESG, ("\n"));
+	rtlhal->driver_is_goingto_unload = false;
+	rtlhal->b_enter_pnp_sleep = false;
+	rtlhal->b_wake_from_pnp_sleep = true;
+	ppsc->b_enter_lps_during_suspend = false;
+
+	/* to resovle s4 can not wake up*/
+	do_gettimeofday(&ts);
+	if(ts.tv_sec - rtlhal->last_suspend_sec < 5)
+		return -1;
+
+	rtl_op_start(hw);
+	device_set_wakeup_enable(wiphy_dev(hw->wiphy), false);
+	ieee80211_resume_disconnect(mac->vif);
+	rtlhal->b_wake_from_pnp_sleep = false;
+	return 0;
+}
+#endif
+
 static int rtl_op_config(struct ieee80211_hw *hw, u32 changed)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
@@ -400,8 +623,10 @@ static int rtl_op_config(struct ieee80211_hw *hw, u32 changed)
 	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
 		struct ieee80211_channel *channel = hw->conf.chandef.chan;
-		enum nl80211_channel_type channel_type = 
-				cfg80211_get_chandef_type(&(hw->conf.chandef)); 
+		/* channel_type is for 20&40M */
+		enum nl80211_channel_type channel_type =
+			 cfg80211_get_chandef_type(&(hw->conf.chandef));
+		enum nl80211_chan_width width = hw->conf.chandef.width;
 #else
 		struct ieee80211_channel *channel = hw->conf.channel;
 		enum nl80211_channel_type channel_type = hw->conf.channel_type;
@@ -427,42 +652,97 @@ static int rtl_op_config(struct ieee80211_hw *hw, u32 changed)
 		 *info for cisco1253 bw20, so we modify
 		 *it here based on UPPER & LOWER
 		 */
-		switch (channel_type) {
-			case NL80211_CHAN_HT20:
-			case NL80211_CHAN_NO_HT:
-				/* SC */
-				mac->cur_40_prime_sc =
-					PRIME_CHNL_OFFSET_DONT_CARE;
-				rtlphy->current_chan_bw = HT_CHANNEL_WIDTH_20;
-				mac->bw_40 = false;
-				break;
-			case NL80211_CHAN_HT40MINUS:
-				/* SC */
-				mac->cur_40_prime_sc = PRIME_CHNL_OFFSET_UPPER;
-				rtlphy->current_chan_bw =
-					HT_CHANNEL_WIDTH_20_40;
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+
+//		printk("band width is %d\n", width);
+		if (width >= NL80211_CHAN_WIDTH_80) {
+			if (width == NL80211_CHAN_WIDTH_80) {
+				u32 center_freq = hw->conf.chandef.center_freq1;
+				u32 primary_freq = 
+				(u32)hw->conf.chandef.chan->center_freq;
+				
+				rtlphy->current_chan_bw = 
+					HT_CHANNEL_WIDTH_80;
+				mac->bw_80 = true;
 				mac->bw_40 = true;
+				if (center_freq > primary_freq) {
+					mac->cur_80_prime_sc = 
+					PRIME_CHNL_OFFSET_LOWER;
+					if (center_freq - primary_freq == 10) {
+						mac->cur_40_prime_sc = 
+						PRIME_CHNL_OFFSET_UPPER;
 
-				/*wide channel */
-				wide_chan -= 2;
+						wide_chan += 2;
+					} else if (center_freq - primary_freq == 30) {
+						mac->cur_40_prime_sc = 
+						PRIME_CHNL_OFFSET_LOWER;
 
-				break;
-			case NL80211_CHAN_HT40PLUS:
-				/* SC */
-				mac->cur_40_prime_sc = PRIME_CHNL_OFFSET_LOWER;
-				rtlphy->current_chan_bw =
-					HT_CHANNEL_WIDTH_20_40;
-				mac->bw_40 = true;
+						wide_chan += 6;
+					}
+				} else {
+					mac->cur_80_prime_sc = 
+					PRIME_CHNL_OFFSET_UPPER;
+					if (primary_freq - center_freq == 10) {
+						mac->cur_40_prime_sc = 
+						PRIME_CHNL_OFFSET_LOWER;
 
-				/*wide channel */
-				wide_chan += 2;
+						wide_chan -= 2;
+					} else if (primary_freq - center_freq == 30) { 
+						mac->cur_40_prime_sc = 
+						PRIME_CHNL_OFFSET_UPPER;
 
-				break;
-			default:
-				mac->bw_40 = false;
-				RT_TRACE(COMP_ERR, DBG_EMERG,
-						("switch case not processed \n"));
-				break;
+						wide_chan -= 6;
+					}
+				}
+			}
+		} else
+#endif
+		{
+			switch (channel_type) {
+				case NL80211_CHAN_HT20:
+				case NL80211_CHAN_NO_HT:
+					/* SC */
+					mac->cur_40_prime_sc =
+						PRIME_CHNL_OFFSET_DONT_CARE;
+					rtlphy->current_chan_bw = 
+						HT_CHANNEL_WIDTH_20;
+					mac->bw_40 = false;
+					mac->bw_80 = false;
+					break;
+				case NL80211_CHAN_HT40MINUS:
+					/* SC */
+					mac->cur_40_prime_sc = 
+						PRIME_CHNL_OFFSET_UPPER;
+					rtlphy->current_chan_bw =
+						HT_CHANNEL_WIDTH_20_40;
+					mac->bw_40 = true;
+					mac->bw_80 = false;
+
+					/*wide channel */
+					wide_chan -= 2;
+
+					break;
+				case NL80211_CHAN_HT40PLUS:
+					/* SC */
+					mac->cur_40_prime_sc = 
+						PRIME_CHNL_OFFSET_LOWER;
+					rtlphy->current_chan_bw =
+						HT_CHANNEL_WIDTH_20_40;
+					mac->bw_40 = true;
+					mac->bw_80 = false;
+
+					/*wide channel */
+					wide_chan += 2;
+
+					break;
+				default:
+					mac->bw_40 = false;
+					mac->bw_80 = false;
+					RT_TRACE(COMP_ERR, DBG_EMERG,
+							("switch case not processed \n"));
+					break;
+			}
 		}
 
 		if (wide_chan <= 0)
@@ -597,7 +877,11 @@ static int rtl_op_sta_add(struct ieee80211_hw *hw,
 		} else if (rtlhal->current_bandtype == BAND_ON_5G) {
 			sta_entry->wireless_mode = WIRELESS_MODE_A;
 			if (sta->ht_cap.ht_supported == true)
-				sta_entry->wireless_mode = WIRELESS_MODE_N_24G;
+				sta_entry->wireless_mode = WIRELESS_MODE_N_5G;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
+			if (sta->vht_cap.vht_supported == true)
+				sta_entry->wireless_mode = WIRELESS_MODE_AC_5G;
+#endif
 
 			if (vif->type == NL80211_IFTYPE_ADHOC)
 				sta_entry->wireless_mode = WIRELESS_MODE_A;
@@ -761,6 +1045,13 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 			mac->assoc_id = bss_conf->aid;
 			memcpy(mac->bssid, bss_conf->bssid, 6);
 
+			mac->b_vht_ldpc_rx = (bool)(sta->vht_cap.cap
+				| IEEE80211_VHT_CAP_RXLDPC);
+			mac->b_vht_stbc_rx  = (bool)(sta->vht_cap.cap
+				| IEEE80211_VHT_CAP_RXSTBC_1
+				| IEEE80211_VHT_CAP_RXSTBC_2
+				| IEEE80211_VHT_CAP_RXSTBC_3
+				| IEEE80211_VHT_CAP_RXSTBC_4);
 			if (rtlpriv->cfg->ops->linked_set_reg)
 				rtlpriv->cfg->ops->linked_set_reg(hw);
 
@@ -776,6 +1067,32 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 					rtl_send_smps_action(hw, sta, 
 							IEEE80211_SMPS_STATIC);
 			}
+
+			if (rtlhal->current_bandtype == BAND_ON_5G) {
+				mac->mode = WIRELESS_MODE_A;
+			} else {
+				if (sta->supp_rates[0] <= 0xf)
+					mac->mode = WIRELESS_MODE_B;
+				else
+					mac->mode = WIRELESS_MODE_G;
+			}
+
+			if (sta->ht_cap.ht_supported) {
+				if (rtlhal->current_bandtype == BAND_ON_2_4G)
+					mac->mode = WIRELESS_MODE_N_24G;
+				else
+					mac->mode = WIRELESS_MODE_N_5G;
+			}
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
+			if (sta->vht_cap.vht_supported) {
+				if (rtlhal->current_bandtype == BAND_ON_5G)
+					mac->mode = WIRELESS_MODE_AC_5G;
+				else
+					mac->mode = WIRELESS_MODE_AC_24G;
+			}
+#endif
+			
 			rcu_read_unlock();
 			
 			RT_TRACE(COMP_MAC80211, DBG_DMESG,
@@ -788,6 +1105,9 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 			mac->link_state = MAC80211_NOLINK;
 			memset(mac->bssid, 0, 6);
 			mac->vendor = PEER_UNKNOWN;
+			mac->mode = 0;
+			mac->b_vht_ldpc_rx = false;
+			mac->b_vht_stbc_rx = false;
 
 			if (rtlpriv->dm.supp_phymode_switch) {
 				if (rtlpriv->cfg->ops->check_switch_to_dmdp)
@@ -892,6 +1212,16 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 				mac->mode = WIRELESS_MODE_N_5G;
 		}
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
+		if (sta->vht_cap.vht_supported) {
+			if (rtlhal->current_bandtype == BAND_ON_5G)
+				mac->mode = WIRELESS_MODE_AC_5G;
+			else
+				mac->mode = WIRELESS_MODE_AC_24G;
+		}
+#endif
+		
+
 		/* just station need it, because ibss & ap mode will
 		 * set in sta_add, and will be NULL here */
 		if (vif->type == NL80211_IFTYPE_STATION) {
@@ -910,6 +1240,12 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 			 * }
 			 * */
 		}
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
+		if (sta->vht_cap.vht_supported) {
+			mac->vht_enable = true;
+		}
+#endif
 
 		if (changed & BSS_CHANGED_BASIC_RATES) {
 			/* for 5G must << RATE_6M_INDEX=4,
@@ -932,9 +1268,10 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 	 * to an AP. For 92SE/CE power save v2.
 	 */
 	if (changed & BSS_CHANGED_ASSOC) {
+		u8 mstatus;
 		if (bss_conf->assoc) {
 			u8 keep_alive = 10;
-			u8 mstatus = RT_MEDIA_CONNECT;
+			mstatus = RT_MEDIA_CONNECT;
 			rtlpriv->cfg->ops->set_hw_reg(hw,
 						      HW_VAR_KEEP_ALIVE,
 						      (u8 *) (&keep_alive));
@@ -946,7 +1283,7 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 
 		} else {
 
-			u8 mstatus = RT_MEDIA_DISCONNECT;
+			mstatus = RT_MEDIA_DISCONNECT;
 			rtlpriv->cfg->ops->set_hw_reg(hw,
 						      HW_VAR_H2C_FW_JOINBSSRPT,
 						      (u8 *) (&mstatus));
@@ -954,10 +1291,9 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 
 		}
 		
-		if (rtlpriv->cfg->ops->get_btc_status()){
+		if (rtlpriv->cfg->ops->get_btc_status())
 			rtlpriv->btcoexist.btc_ops->btc_mediastatus_notify(
-						rtlpriv, ppsc->report_linked);
-		}
+						rtlpriv, mstatus);
 	}
 
 out:
@@ -1081,11 +1417,13 @@ static void rtl_op_sw_scan_start(struct ieee80211_hw *hw)
 
 	RT_TRACE(COMP_MAC80211, DBG_LOUD, ("\n"));
 	mac->act_scanning = true;
-	/*rtlpriv->btcops->btc_scan_notify(rtlpriv, 0); */
 	if (rtlpriv->link_info.b_higher_busytraffic) {
 		mac->skip_scan = true;
 		return;	
 	}
+
+	if (rtlpriv->cfg->ops->get_btc_status())
+		rtlpriv->btcoexist.btc_ops->btc_scan_notify(rtlpriv, 1);
 	
 	if (rtlpriv->dm.supp_phymode_switch) {
 		if (rtlpriv->cfg->ops->check_switch_to_dmdp)
@@ -1138,7 +1476,8 @@ static void rtl_op_sw_scan_complete(struct ieee80211_hw *hw)
 	}
 
 	rtlpriv->cfg->ops->scan_operation_backup(hw, SCAN_OPT_RESTORE);
-	/* rtlpriv->btcops->btc_scan_notify(rtlpriv, 1); */
+	if (rtlpriv->cfg->ops->get_btc_status())
+		rtlpriv->btcoexist.btc_ops->btc_scan_notify(rtlpriv, 0);
 }
 
 static int rtl_op_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
@@ -1438,13 +1777,13 @@ const struct ieee80211_ops rtl_ops = {
 	.tx = rtl_op_tx,
 	.add_interface = rtl_op_add_interface,
 	.remove_interface = rtl_op_remove_interface,
-/*<delete in kernel start>*/
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,37))
-/*<delete in kernel end>*/	
 	.change_interface = rtl_op_change_interface,
-/*<delete in kernel start>*/	
 #endif
-/*<delete in kernel end>*/
+#ifdef CONFIG_PM
+	.suspend = rtl_op_suspend,
+	.resume = rtl_op_resume,
+#endif
 	.config = rtl_op_config,
 	.configure_filter = rtl_op_configure_filter,
 	.set_key = rtl_op_set_key,

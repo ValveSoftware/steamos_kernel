@@ -312,6 +312,105 @@ static void _rtl8821ae_fwlps_enter(struct ieee80211_hw *hw)
 
 }
 
+void _rtl8821ae_download_rsvd_page(struct ieee80211_hw *hw,
+				  bool dl_whole_packets)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_hal *rtlhal = rtl_hal(rtlpriv);
+	u8 tmp_regcr, tmp_reg422, bcnvalid_reg;
+	u8 count = 0, dlbcn_count = 0;
+	bool send_beacon = false;
+	
+	tmp_regcr = rtl_read_byte(rtlpriv, REG_CR + 1);
+	rtl_write_byte(rtlpriv, REG_CR + 1, (tmp_regcr | BIT(0)));
+	
+	_rtl8821ae_set_bcn_ctrl_reg(hw, 0, BIT(3));
+	_rtl8821ae_set_bcn_ctrl_reg(hw, BIT(4), 0);
+	
+	tmp_reg422 = rtl_read_byte(rtlpriv, REG_FWHW_TXQ_CTRL + 2);
+	rtl_write_byte(rtlpriv, REG_FWHW_TXQ_CTRL + 2,
+		       tmp_reg422 & (~BIT(6)));
+	if (tmp_reg422 & BIT(6))
+		send_beacon = true;
+	
+	do {
+		bcnvalid_reg = rtl_read_byte(rtlpriv, REG_TDECTRL + 2);
+		rtl_write_byte(rtlpriv, REG_TDECTRL + 2,
+			       (bcnvalid_reg | BIT(0)));
+		_rtl8821ae_return_beacon_queue_skb(hw);
+	
+		if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
+			rtl8812ae_set_fw_rsvdpagepkt(hw, false,
+						     dl_whole_packets);
+		else
+			rtl8821ae_set_fw_rsvdpagepkt(hw, false,
+						     dl_whole_packets);
+		
+		bcnvalid_reg = rtl_read_byte(rtlpriv, REG_TDECTRL + 2);
+		count = 0;
+		while (!(bcnvalid_reg & BIT(0)) && count < 20){
+			count++;
+			udelay(10);
+			bcnvalid_reg = rtl_read_byte(rtlpriv, REG_TDECTRL + 2);
+		}
+		dlbcn_count++;
+	} while (!(bcnvalid_reg & BIT(0)) && dlbcn_count < 5);
+
+	if (!(bcnvalid_reg & BIT(0)))
+		RT_TRACE(COMP_INIT, DBG_LOUD, ("Download RSVD page failed!\n"));
+
+	if (bcnvalid_reg & BIT(0) && rtlhal->b_enter_pnp_sleep) {
+		rtl_write_byte(rtlpriv, REG_TDECTRL + 2, bcnvalid_reg | BIT(0));
+		_rtl8821ae_return_beacon_queue_skb(hw);
+		if (send_beacon) {
+			dlbcn_count = 0;
+			do {
+				rtl_write_byte(rtlpriv, REG_TDECTRL + 2,
+					       bcnvalid_reg | BIT(0));
+
+				_rtl8821ae_return_beacon_queue_skb(hw);
+	
+				if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
+					rtl8812ae_set_fw_rsvdpagepkt(hw, true,
+								     false);
+				else
+					rtl8821ae_set_fw_rsvdpagepkt(hw, true,
+								     false);
+					
+				/* check rsvd page download OK. */
+				bcnvalid_reg = rtl_read_byte(rtlpriv,
+							     REG_TDECTRL + 2);
+				count = 0;
+				while (!(bcnvalid_reg & BIT(0)) && count < 20) {
+					count++;
+					udelay(10);
+					bcnvalid_reg = rtl_read_byte(rtlpriv,
+							       REG_TDECTRL + 2);
+				}
+				dlbcn_count++;
+			} while (!(bcnvalid_reg & BIT(0)) && dlbcn_count < 5);
+			
+			if (!(bcnvalid_reg & BIT(0)))
+				RT_TRACE(COMP_INIT, DBG_LOUD,
+					 ("2 Download RSVD page failed!\n"));
+		}
+	}
+
+	if (bcnvalid_reg & BIT(0))
+		rtl_write_byte(rtlpriv, REG_TDECTRL + 2, BIT(0));
+	
+	_rtl8821ae_set_bcn_ctrl_reg(hw, BIT(3), 0);
+	_rtl8821ae_set_bcn_ctrl_reg(hw, 0, BIT(4));
+	
+	if (send_beacon)
+		rtl_write_byte(rtlpriv, REG_FWHW_TXQ_CTRL + 2, tmp_reg422);
+	
+	if (!rtlhal->b_enter_pnp_sleep) {
+		tmp_regcr = rtl_read_byte(rtlpriv, REG_CR + 1);
+		rtl_write_byte(rtlpriv, REG_CR + 1, (tmp_regcr & ~(BIT(0))));
+	}
+}
+
 void rtl8821ae_get_hw_reg(struct ieee80211_hw *hw, u8 variable, u8 *val)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
@@ -380,13 +479,18 @@ void rtl8821ae_get_hw_reg(struct ieee80211_hw *hw, u8 variable, u8 *val)
 
 			break;
 		}
+	case HAL_DEF_WOWLAN:
+		if(ppsc->wo_wlan_mode)
+			*((bool *) (val)) = true;
+		else
+			*((bool *) (val)) = false;
+		break;
 	default:
 		RT_TRACE(COMP_ERR, DBG_EMERG,
 			 ("switch case not process %x\n",variable));
 		break;
 	}
 }
-
 
 void rtl8821ae_set_hw_reg(struct ieee80211_hw *hw, u8 variable, u8 *val)
 {
@@ -436,12 +540,12 @@ void rtl8821ae_set_hw_reg(struct ieee80211_hw *hw, u8 variable, u8 *val)
 			rtl_write_byte(rtlpriv, REG_SPEC_SIFS + 1, val[0]);
 			rtl_write_byte(rtlpriv, REG_MAC_SPEC_SIFS + 1, val[0]);
 
-			if (!mac->ht_enable)
-				rtl_write_word(rtlpriv, REG_RESP_SIFS_OFDM,
-					       0x0e0e);
-			else
-				rtl_write_word(rtlpriv, REG_RESP_SIFS_OFDM,
-					       *((u16 *) val));
+			rtl_write_byte(rtlpriv, REG_RESP_SIFS_OFDM + 1, val[0]);
+			rtl_write_byte(rtlpriv, REG_RESP_SIFS_OFDM, val[0]);
+			break;
+		}
+	case HW_VAR_R2T_SIFS:{
+			rtl_write_byte(rtlpriv, REG_RESP_SIFS_OFDM + 1, val[0]);
 			break;
 		}
 	case HW_VAR_SLOT_TIME:{
@@ -662,64 +766,13 @@ void rtl8821ae_set_hw_reg(struct ieee80211_hw *hw, u8 variable, u8 *val)
 
 	case HW_VAR_H2C_FW_JOINBSSRPT:{
 			u8 mstatus = (*(u8 *) val);
-			u8 tmp_regcr, tmp_reg422,bcnvalid_reg;
-			u8 count = 0, dlbcn_count = 0;
-			bool b_recover = false;
 
 			if (mstatus == RT_MEDIA_CONNECT) {
 				rtlpriv->cfg->ops->set_hw_reg(hw, HW_VAR_AID,
 							      NULL);
-
-				tmp_regcr = rtl_read_byte(rtlpriv, REG_CR + 1);
-				rtl_write_byte(rtlpriv, REG_CR + 1,
-					       (tmp_regcr | BIT(0)));
-
-				_rtl8821ae_set_bcn_ctrl_reg(hw, 0, BIT(3));
-				_rtl8821ae_set_bcn_ctrl_reg(hw, BIT(4), 0);
-
-				tmp_reg422 =
-				    rtl_read_byte(rtlpriv,
-						  REG_FWHW_TXQ_CTRL + 2);
-				rtl_write_byte(rtlpriv, REG_FWHW_TXQ_CTRL + 2,
-					       tmp_reg422 & (~BIT(6)));
-				if (tmp_reg422 & BIT(6))
-					b_recover = true;
-
-				do {
-					bcnvalid_reg = rtl_read_byte(rtlpriv, REG_TDECTRL+2);
-					rtl_write_byte(rtlpriv, REG_TDECTRL+2,(bcnvalid_reg | BIT(0)));
-					_rtl8821ae_return_beacon_queue_skb(hw);
-
-					if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
-						rtl8812ae_set_fw_rsvdpagepkt(hw, 0);
-					else
-						rtl8821ae_set_fw_rsvdpagepkt(hw, 0);
-					bcnvalid_reg = rtl_read_byte(rtlpriv, REG_TDECTRL+2);
-					count = 0;
-					while (!(bcnvalid_reg & BIT(0)) && count <20){
-						count++;
-						udelay(10);
-						bcnvalid_reg = rtl_read_byte(rtlpriv, REG_TDECTRL+2);
-					}
-					dlbcn_count++;
-				} while (!(bcnvalid_reg & BIT(0)) && dlbcn_count <5);
-
-				if (bcnvalid_reg & BIT(0))
-					rtl_write_byte(rtlpriv, REG_TDECTRL+2, BIT(0));
-
-				_rtl8821ae_set_bcn_ctrl_reg(hw, BIT(3), 0);
-				_rtl8821ae_set_bcn_ctrl_reg(hw, 0, BIT(4));
-
-				if (b_recover) {
-					rtl_write_byte(rtlpriv,
-						       REG_FWHW_TXQ_CTRL + 2,
-						       tmp_reg422);
-				}
-
-				rtl_write_byte(rtlpriv, REG_CR + 1,
-					       (tmp_regcr & ~(BIT(0))));
+				_rtl8821ae_download_rsvd_page(hw, false);
 			}
-			rtl8821ae_set_fw_joinbss_report_cmd(hw, (*(u8 *) val));
+			rtl8821ae_set_fw_media_status_rpt_cmd(hw, mstatus);
 
 			break;
 		}
@@ -818,11 +871,17 @@ static bool _rtl8821ae_llt_table_init(struct ieee80211_hw *hw)
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	unsigned short i;
 	u8 txpktbuf_bndy;
+	u32 rqpn;
 	u8 maxPage;
 	bool status;
 
 	maxPage = 255;
 	txpktbuf_bndy = 0xF8;
+	rqpn = 0x80e70808;
+	if (rtlpriv->rtlhal.hw_type == HARDWARE_TYPE_RTL8812AE) {
+		txpktbuf_bndy = 0xFA;
+		rqpn = 0x80e90808;
+	}
 	
 
 	rtl_write_byte(rtlpriv, REG_TRXFF_BNDY, txpktbuf_bndy);
@@ -856,7 +915,8 @@ static bool _rtl8821ae_llt_table_init(struct ieee80211_hw *hw)
 	if (true != status)
 		return status;
 
-	rtl_write_dword(rtlpriv, REG_RQPN, 0x80e70808);
+	rtl_write_dword(rtlpriv, REG_RQPN, rqpn);
+	
 	rtl_write_byte(rtlpriv, REG_RQPN_NPQ, 0x00);
 
 	return true;
@@ -1187,137 +1247,6 @@ void rtl8821ae_enable_hw_security_config(struct ieee80211_hw *hw)
 
 }
 
-#if 0
-bool _rtl8821ae_check_pcie_dma_hang(struct ieee80211_hw *hw)
-{
-	struct rtl_priv *rtlpriv = rtl_priv(hw);
-	u8 tmp;
-	tmp = rtl_read_byte(rtlpriv, REG_DBI_CTRL+3);
-	if (!(tmp&BIT(2))) {
-		rtl_write_byte(rtlpriv, REG_DBI_CTRL+3, tmp|BIT(2));
-		mdelay(100);
-	}
-	
-	tmp = rtl_read_byte(rtlpriv, REG_DBI_CTRL+3);
-	if (tmp&BIT(0) || tmp&BIT(1)) {
-		RT_TRACE(COMP_INIT, DBG_LOUD,
-			("rtl8821ae_check_pcie_dma_hang(): TRUE! Reset PCIE DMA!\n"));
-		return true;
-	} else {
-		return false;
-	}
-}
-
-void _rtl8821ae_reset_pcie_interface_dma(struct ieee80211_hw *hw,
-													bool mac_power_on, bool watch_dog)
-{
-	struct rtl_priv *rtlpriv = rtl_priv(hw);
-	u8 tmp;
-	bool release_mac_rx_pause;
-	u8 backup_pcie_dma_pause;
-	
-	RT_TRACE(COMP_INIT, DBG_LOUD, ("_rtl8821ae_reset_pcie_interface_dma()\n"));
-	
-	tmp = rtl_read_byte(rtlpriv, REG_RSV_CTRL);
-	tmp &= ~BIT(1);
-	rtl_write_byte(rtlpriv, REG_RSV_CTRL, tmp);
-	tmp = rtl_read_byte(rtlpriv, REG_PMC_DBG_CTRL2);
-	tmp |= BIT2;
-	rtl_write_byte(rtlpriv, REG_PMC_DBG_CTRL2, tmp);
-		
-	tmp = rtl_read_byte(rtlpriv, REG_RXDMA_CONTROL);
-	if (tmp & BIT(2)) {
-		release_mac_rx_pause = false;
-	} else {
-		rtl_write_byte(rtlpriv, REG_RXDMA_CONTROL, tmp | BIT(2));
-		release_mac_rx_pause = true;
-	}
-	backup_pcie_dma_pause = rtl_read_byte(rtlpriv, REG_PCIE_CTRL_REG+1);
-	if (backup_pcie_dma_pause != 0xFF)
-		rtl_write_byte(rtlpriv, REG_PCIE_CTRL_REG+1, 0xFF);
-	
-	if (mac_power_on)
-		rtl_write_byte(rtlpriv, REG_CR, 0);
-		
-	tmp = rtl_read_byte(rtlpriv, REG_SYS_FUNC_EN+1);
-	tmp &= ~BIT(0);
-	rtl_write_byte(rtlpriv, REG_SYS_FUNC_EN+1, tmp);
-		
-	tmp = rtl_read_byte(rtlpriv, REG_SYS_FUNC_EN+1);
-	tmp |= ~BIT(0);
-	rtl_write_byte(rtlpriv, REG_SYS_FUNC_EN+1, tmp);
-	
-	if (mac_power_on)
-		rtl_write_byte(rtlpriv, REG_CR, 0xFF);
-	
-	tmp = rtl_read_byte(rtlpriv, REG_MAC_PHY_CTRL_NORMAL+2);
-	tmp |= BIT1;
-	rtl_write_byte(rtlpriv, REG_MAC_PHY_CTRL_NORMAL+2, tmp);
-		
-	if (watch_dog) {
-		u32 rqpn = 0;
-		u32 rqpn_npq = 0;
-		u8 tx_page_boundary = _RQPN_Init_8812E(Adapter, &rqpn_npq, &rqpn);
-			
-		if(LLT_table_init_8812(Adapter, TX_PAGE_BOUNDARY, RQPN, RQPN_NPQ) == RT_STATUS_FAILURE)
-			return false;
-			
-			PlatformAcquireSpinLock(Adapter, RT_RX_SPINLOCK);
-			PlatformAcquireSpinLock(Adapter, RT_TX_SPINLOCK);
-			
-			// <1> Reset Tx descriptor
-			Adapter->HalFunc.ResetTxDescHandler(Adapter,Adapter->NumTxDesc);
-			
-			// <2> Reset Rx descriptor
-			Adapter->HalFunc.ResetRxDescHandler(Adapter,Adapter->NumRxDesc);
-			
-			// <3> Reset RFDs
-			FreeRFDs( Adapter, TRUE);
-			
-			// <4> Reset TCBs
-			FreeTCBs( Adapter, TRUE);
-			
-			// We should set all Rx desc own bit to 1 to prevent from RDU after enable Rx DMA. 2013.02.18, by tynli.
-			PrepareAllRxDescBuffer(Adapter);
-			
-			PlatformReleaseSpinLock(Adapter, RT_TX_SPINLOCK);
-			PlatformReleaseSpinLock(Adapter, RT_RX_SPINLOCK);
-			
-			//
-			// Initialize TRx DMA address.
-			//
-			// Because set 0x100 to 0x0 will cause the Rx descriptor address 0x340 be cleared to zero on 88EE,
-			// we should re-initialize Rx desc. address before enable DMA. 2012.11.07. by tynli.
-			InitTRxDescHwAddress8812AE(Adapter);
-		}
-	
-		// In MAC power on state, BB and RF maybe in ON state, if we release TRx DMA here
-		// it will cause packets to be started to Tx/Rx, so we release Tx/Rx DMA later.
-		if(!bInMACPowerOn || bInWatchDog)
-		{
-			// 8. release TRX DMA
-			//write 0x284 bit[18] = 1'b0
-			//write 0x301 = 0x00
-			if(bReleaseMACRxPause)
-			{
-				u1Tmp = PlatformEFIORead1Byte(Adapter, REG_RXDMA_CONTROL);
-				PlatformEFIOWrite1Byte(Adapter, REG_RXDMA_CONTROL, (u1Tmp&~BIT2));
-			}
-			PlatformEFIOWrite1Byte(Adapter, 	REG_PCIE_CTRL_REG+1, BackUpPcieDMAPause);
-		}
-	
-		if(IS_HARDWARE_TYPE_8821E(Adapter))
-		{
-			//9. lock system register	
-			//	 write 0xCC bit[2] = 1'b0
-			u1Tmp = PlatformEFIORead1Byte(Adapter, REG_PMC_DBG_CTRL2_8723B);
-			u1Tmp &= ~(BIT2);
-			PlatformEFIOWrite1Byte(Adapter, REG_PMC_DBG_CTRL2_8723B, u1Tmp);
-		}
-	
-		return RT_STATUS_SUCCESS;
-}
-#endif
 
 // Static MacID Mapping (cf. Used in MacIdDoStaticMapping) ----------
 #define MAC_ID_STATIC_FOR_DEFAULT_PORT				0
@@ -1342,6 +1271,593 @@ void rtl8821ae_macid_initialize_mediastatus(struct ieee80211_hw *hw)
 		MAC_ID_STATIC_FOR_BT_CLIENT_END));
 }
 
+bool _rtl8821ae_check_pcie_dma_hang(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	u8 tmp;
+	
+	/* write reg 0x350 Bit[26]=1. Enable debug port. */
+	tmp = rtl_read_byte(rtlpriv, REG_DBI_CTRL + 3);
+	if (!(tmp & BIT(2))) {
+		rtl_write_byte(rtlpriv, REG_DBI_CTRL + 3, (tmp | BIT(2)));
+		mdelay(100);
+	}
+
+	/* read reg 0x350 Bit[25] if 1 : RX hang */
+	/* read reg 0x350 Bit[24] if 1 : TX hang */
+	tmp = rtl_read_byte(rtlpriv, REG_DBI_CTRL + 3);
+	if ((tmp & BIT(0)) || (tmp & BIT(1))) {
+		RT_TRACE(COMP_INIT, DBG_LOUD, ("CheckPcieDMAHang8821AE(): true! Reset PCIE DMA!\n"));
+		return true;
+	} else {
+		return false;
+	}
+}
+
+bool _rtl8821ae_reset_pcie_interface_dma(struct ieee80211_hw *hw,
+					 bool mac_power_on,
+					 bool in_watchdog)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
+	u8 tmp;
+	bool release_mac_rx_pause;
+	u8 backup_pcie_dma_pause;
+
+	RT_TRACE(COMP_INIT, DBG_LOUD, ("\n"));
+	
+	/* 1. Disable register write lock. 0x1c[1] = 0 */
+	tmp = rtl_read_byte(rtlpriv, REG_RSV_CTRL);
+	tmp &= ~(BIT(1));
+	rtl_write_byte(rtlpriv, REG_RSV_CTRL, tmp);
+	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE) {
+		/* write 0xCC bit[2] = 1'b1 */
+		tmp = rtl_read_byte(rtlpriv, REG_PMC_DBG_CTRL2);
+		tmp |= BIT(2);
+		rtl_write_byte(rtlpriv, REG_PMC_DBG_CTRL2, tmp);
+	}
+	
+	/* 2. Check and pause TRX DMA */
+	/* write 0x284 bit[18] = 1'b1 */
+	/* write 0x301 = 0xFF */
+	tmp = rtl_read_byte(rtlpriv, REG_RXDMA_CONTROL);
+	if (tmp & BIT(2)) {
+		/* Already pause before the function for another purpose. */
+		release_mac_rx_pause = false;
+	} else {
+		rtl_write_byte(rtlpriv, REG_RXDMA_CONTROL, (tmp | BIT(2)));
+		release_mac_rx_pause = true;
+	}
+	backup_pcie_dma_pause = rtl_read_byte(rtlpriv, REG_PCIE_CTRL_REG + 1);
+	if (backup_pcie_dma_pause != 0xFF)
+		rtl_write_byte(rtlpriv, REG_PCIE_CTRL_REG + 1, 0xFF);
+
+	if (mac_power_on) {
+		/* 3. reset TRX function */
+		/* write 0x100 = 0x00 */
+		rtl_write_byte(rtlpriv, REG_CR, 0);
+	}
+	
+	/* 4. Reset PCIe DMA. 0x3[0] = 0 */
+	tmp = rtl_read_byte(rtlpriv, REG_SYS_FUNC_EN + 1);
+	tmp &= ~(BIT(0));
+	rtl_write_byte(rtlpriv, REG_SYS_FUNC_EN + 1, tmp);
+	
+	/* 5. Enable PCIe DMA. 0x3[0] = 1 */
+	tmp = rtl_read_byte(rtlpriv, REG_SYS_FUNC_EN + 1);
+	tmp |= BIT(0);
+	rtl_write_byte(rtlpriv, REG_SYS_FUNC_EN + 1, tmp);
+
+	if (mac_power_on) {
+		/* 6. enable TRX function */
+		/* write 0x100 = 0xFF */
+		rtl_write_byte(rtlpriv, REG_CR, 0xFF);
+
+		/* We should init LLT & RQPN and 
+		 * prepare Tx/Rx descrptor address later
+		 * because MAC function is reset.*/
+	}
+
+	/* 7. Restore PCIe autoload down bit */
+	/* 8812AE does not has the defination. */
+	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE) {
+		/* write 0xF8 bit[17] = 1'b1 */
+		tmp = rtl_read_byte(rtlpriv, REG_MAC_PHY_CTRL_NORMAL + 2);
+		tmp |= BIT(1);
+		rtl_write_byte(rtlpriv, REG_MAC_PHY_CTRL_NORMAL + 2, tmp);
+	}
+	
+	/* We don't check for hang in watchdog in Linux,
+	 * so mask this
+	if (in_watchdog) {
+
+		if (!_rtl8821ae_llt_table_init(hw))
+			return false;
+		
+		PlatformAcquireSpinLock(Adapter, RT_RX_SPINLOCK);
+		PlatformAcquireSpinLock(Adapter, RT_TX_SPINLOCK);
+		
+		Adapter->HalFunc.ResetTxDescHandler(Adapter,Adapter->NumTxDesc);
+		
+		Adapter->HalFunc.ResetRxDescHandler(Adapter,Adapter->NumRxDesc);
+		
+		FreeRFDs( Adapter, true);
+		
+		FreeTCBs( Adapter, true);
+		
+		PrepareAllRxDescBuffer(Adapter);
+		
+		PlatformReleaseSpinLock(Adapter, RT_TX_SPINLOCK);
+		PlatformReleaseSpinLock(Adapter, RT_RX_SPINLOCK);
+		
+		InitTRxDescHwAddress8812AE(Adapter);
+	}*/
+
+	/* In MAC power on state, BB and RF maybe in ON state,
+	 * if we release TRx DMA here.
+	 * it will cause packets to be started to Tx/Rx,
+	 * so we release Tx/Rx DMA later.*/
+	if (!mac_power_on/* || in_watchdog*/) {
+		/* 8. release TRX DMA */
+		/* write 0x284 bit[18] = 1'b0 */
+		/* write 0x301 = 0x00 */
+		if (release_mac_rx_pause) {
+			tmp = rtl_read_byte(rtlpriv, REG_RXDMA_CONTROL);
+			rtl_write_byte(rtlpriv, REG_RXDMA_CONTROL,
+				       tmp & (~BIT(2)));
+		}
+		rtl_write_byte(rtlpriv, REG_PCIE_CTRL_REG + 1,
+			       backup_pcie_dma_pause);
+	}
+
+	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE) {
+		/* 9. lock system register */	
+		/* write 0xCC bit[2] = 1'b0 */
+		tmp = rtl_read_byte(rtlpriv, REG_PMC_DBG_CTRL2);
+		tmp &= ~(BIT(2));
+		rtl_write_byte(rtlpriv, REG_PMC_DBG_CTRL2, tmp);
+	}
+	return true;
+}
+
+void _rtl8821ae_get_wakeup_reason(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
+	struct rtl_ps_ctl *ppsc = rtl_psc(rtlpriv);
+	u8 fw_reason = 0;
+	struct timeval ts;
+
+	fw_reason = rtl_read_byte(rtlpriv, REG_MCUTST_WOWLAN);
+
+	RT_TRACE(COMP_POWER, DBG_LOUD, ("WOL Read 0x1c7 = %02X\n", fw_reason));
+
+	ppsc->wakeup_reason = 0;
+
+	
+	rtlhal->last_suspend_sec = ts.tv_sec;
+
+	switch(fw_reason) {
+	case FW_WOW_V2_PTK_UPDATE_EVENT:
+		ppsc->wakeup_reason = WOL_REASON_PTK_UPDATE;
+		do_gettimeofday(&ts);
+		ppsc->last_wakeup_time = ts.tv_sec*1000 + ts.tv_usec/1000;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's a WOL PTK Key update event!\n"));
+		break;
+	case FW_WOW_V2_GTK_UPDATE_EVENT:
+		ppsc->wakeup_reason = WOL_REASON_GTK_UPDATE;
+		do_gettimeofday(&ts);
+		ppsc->last_wakeup_time = ts.tv_sec*1000 + ts.tv_usec/1000;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's a WOL GTK Key update event!\n"));
+		break;
+	case FW_WOW_V2_DISASSOC_EVENT:
+		ppsc->wakeup_reason = WOL_REASON_DISASSOC;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's a disassociation event!\n"));
+		break;
+	case FW_WOW_V2_DEAUTH_EVENT:
+		ppsc->wakeup_reason = WOL_REASON_DEAUTH;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's a deauth event!\n"));
+		break;
+	case FW_WOW_V2_FW_DISCONNECT_EVENT:
+		ppsc->wakeup_reason = WOL_REASON_AP_LOST;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's a Fw disconnect decision (AP lost) event!\n"));
+	break;
+	case FW_WOW_V2_MAGIC_PKT_EVENT:
+		ppsc->wakeup_reason = WOL_REASON_MAGIC_PKT;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's a magic packet event!\n"));
+		break;
+	case FW_WOW_V2_UNICAST_PKT_EVENT:
+		ppsc->wakeup_reason = WOL_REASON_UNICAST_PKT;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's an unicast packet event!\n"));
+		break;
+	case FW_WOW_V2_PATTERN_PKT_EVENT:
+		ppsc->wakeup_reason = WOL_REASON_PATTERN_PKT;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's a pattern match event!\n"));
+		break;
+	case FW_WOW_V2_RTD3_SSID_MATCH_EVENT:
+		ppsc->wakeup_reason = WOL_REASON_RTD3_SSID_MATCH;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's an RTD3 Ssid match event!\n"));
+		break;
+	case FW_WOW_V2_REALWOW_V2_WAKEUPPKT:
+		ppsc->wakeup_reason = WOL_REASON_REALWOW_V2_WAKEUPPKT;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's an RealWoW wake packet event!\n"));
+		break;
+	case FW_WOW_V2_REALWOW_V2_ACKLOST:
+		ppsc->wakeup_reason = WOL_REASON_REALWOW_V2_ACKLOST;
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("It's an RealWoW ack lost event!\n"));
+		break;
+	default:
+		RT_TRACE(COMP_POWER, DBG_DMESG,
+			 ("WOL Read 0x1c7 = %02X, Unknown reason!\n",
+			  fw_reason));
+		break;
+	}
+}
+
+void _rtl8821ae_init_trx_desc_hw_address(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_pci *rtlpci = rtl_pcidev(rtl_pcipriv(hw));
+
+	/*low address*/
+	rtl_write_dword(rtlpriv, REG_BCNQ_DESA,
+			rtlpci->tx_ring[BEACON_QUEUE].dma & DMA_BIT_MASK(32));
+	rtl_write_dword(rtlpriv, REG_MGQ_DESA,
+			rtlpci->tx_ring[MGNT_QUEUE].dma & DMA_BIT_MASK(32));
+	rtl_write_dword(rtlpriv, REG_VOQ_DESA,
+			rtlpci->tx_ring[VO_QUEUE].dma & DMA_BIT_MASK(32));
+	rtl_write_dword(rtlpriv, REG_VIQ_DESA,
+			rtlpci->tx_ring[VI_QUEUE].dma & DMA_BIT_MASK(32));
+	rtl_write_dword(rtlpriv, REG_BEQ_DESA,
+			rtlpci->tx_ring[BE_QUEUE].dma & DMA_BIT_MASK(32));
+	rtl_write_dword(rtlpriv, REG_BKQ_DESA,
+			rtlpci->tx_ring[BK_QUEUE].dma & DMA_BIT_MASK(32));
+	rtl_write_dword(rtlpriv, REG_HQ_DESA,
+			rtlpci->tx_ring[HIGH_QUEUE].dma & DMA_BIT_MASK(32));
+	rtl_write_dword(rtlpriv, REG_RX_DESA,
+			rtlpci->rx_ring[RX_MPDU_QUEUE].dma & DMA_BIT_MASK(32));
+}
+
+bool _rtl8821ae_init_llt_table(struct ieee80211_hw *hw, u32 boundary)
+{
+	bool status = true;
+	u32 i;
+  	u32 txpktbuf_bndy = boundary;
+   	u32 last_entry_of_txpktbuf = LAST_ENTRY_OF_TX_PKT_BUFFER;
+
+	for (i = 0 ; i < (txpktbuf_bndy - 1) ; i++) {
+		status = _rtl8821ae_llt_write(hw, i , i + 1);
+		if (true != status) {
+			return status;
+		}
+	}
+
+	status = _rtl8821ae_llt_write(hw, (txpktbuf_bndy - 1), 0xFF); 
+	if (true != status) {
+		return status;
+	}
+
+	for (i = txpktbuf_bndy ; i < last_entry_of_txpktbuf ; i++){
+		status = _rtl8821ae_llt_write(hw, i, (i + 1)); 
+		if (true != status) {
+			return status;
+		}
+	}
+	
+	status = _rtl8821ae_llt_write(hw, last_entry_of_txpktbuf,
+				      txpktbuf_bndy);
+	if (true != status) {
+		return status;
+	}
+
+	return status;	
+}
+
+bool _rtl8821ae_dynamic_rqpn(struct ieee80211_hw *hw, u32 boundary,
+			     u16 npq_rqpn_value, u32 rqpn_val)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	u8 tmp;
+	bool ret = true;
+	u16 count = 0, tmp16;
+	bool support_remote_wakeup;
+		
+	rtlpriv->cfg->ops->get_hw_reg(hw, HAL_DEF_WOWLAN,
+				      (u8 *)(&support_remote_wakeup));
+	
+	RT_TRACE(COMP_INIT, DBG_LOUD,
+		 ("boundary=0x%#X, NPQ_RQPNValue=0x%#X, RQPNValue=0x%#X\n",
+		  boundary, npq_rqpn_value, rqpn_val));
+		
+	/* stop PCIe DMA
+	 * 1. 0x301[7:0] = 0xFE */
+	rtl_write_byte(rtlpriv, REG_PCIE_CTRL_REG + 1, 0xFE);
+		
+	/* wait TXFF empty
+	 * 2. polling till 0x41A[15:0]=0x07FF */
+	tmp16 = rtl_read_word(rtlpriv, REG_TXPKT_EMPTY);
+	while ((tmp16 & 0x07FF) != 0x07FF) {
+		udelay(100);
+		tmp16 = rtl_read_word(rtlpriv, REG_TXPKT_EMPTY);
+		count++;
+		if ((count % 200) == 0) {
+			RT_TRACE(COMP_INIT, DBG_LOUD,
+				 ("Tx queue is not empty for 20ms!\n"));
+		}
+		if (count >= 1000) {
+			RT_TRACE(COMP_INIT, DBG_LOUD,
+				 ("Wait for Tx FIFO empty timeout!\n"));
+			break;
+		}
+	}
+	
+	/* TX pause
+	 * 3. reg 0x522=0xFF */
+	rtl_write_byte(rtlpriv, REG_TXPAUSE, 0xFF);
+	
+	/* Wait TX State Machine OK
+	 * 4. polling till reg 0x5FB~0x5F8 = 0x00000000 for 50ms */
+	count = 0;
+	while (rtl_read_byte(rtlpriv, REG_SCH_TXCMD) != 0) {
+		udelay(100);
+		count++;
+		if (count >= 500) {
+			RT_TRACE(COMP_INIT, DBG_LOUD,
+				 ("Wait for TX State Machine ready timeout !!\n"));
+			break;
+		}
+	}
+	
+	/* stop RX DMA path
+	 * 5.	0x284[18] = 1
+	 * 6.	wait till 0x284[17] == 1
+	 * wait RX DMA idle */
+	count = 0;
+	tmp = rtl_read_byte(rtlpriv, REG_RXDMA_CONTROL);
+	rtl_write_byte(rtlpriv, REG_RXDMA_CONTROL, (tmp | BIT(2)));
+	do {		
+		tmp = rtl_read_byte(rtlpriv, REG_RXDMA_CONTROL);
+		udelay(10);
+		count++;
+	} while (!(tmp & BIT(1)) && count < 100);
+	
+	RT_TRACE(COMP_INIT, DBG_LOUD,
+		 ("Wait until Rx DMA Idle. count=%d REG[0x286]=0x%x\n",
+		  count, tmp));
+		
+	/* reset BB
+	 * 7.	0x02 [0] = 0 */
+	tmp = rtl_read_byte(rtlpriv, REG_SYS_FUNC_EN);
+	tmp &= ~(BIT(0));
+	rtl_write_byte(rtlpriv, REG_SYS_FUNC_EN, tmp);
+	
+	/* Reset TRX MAC
+	 * 8.	 0x100 = 0x00 
+	 * Delay (1ms) */
+	rtl_write_byte(rtlpriv, REG_CR, 0x00);
+	udelay(1000);
+	
+	/* Disable MAC Security Engine
+	 * 9.	0x100 bit[9]=0 */
+	tmp = rtl_read_byte(rtlpriv, REG_CR + 1);
+	tmp &= ~(BIT(1));
+	rtl_write_byte(rtlpriv, REG_CR + 1, tmp);
+	
+	/* To avoid DD-Tim Circuit hang
+	 * 10.	0x553 bit[5]=1 */
+	tmp = rtl_read_byte(rtlpriv, REG_DUAL_TSF_RST);
+	rtl_write_byte(rtlpriv, REG_DUAL_TSF_RST, (tmp | BIT(5)));
+	
+	/* Enable MAC Security Engine
+	 * 11.	0x100 bit[9]=1 */
+	tmp = rtl_read_byte(rtlpriv, REG_CR + 1);
+	rtl_write_byte(rtlpriv, REG_CR + 1, (tmp | BIT(1)));
+	
+	/* Enable TRX MAC
+	 * 12.	 0x100 = 0xFF
+	 *	Delay (1ms) */
+	rtl_write_byte(rtlpriv, REG_CR, 0xFF);
+	udelay(1000);
+	
+	/* Enable BB
+	 * 13.	0x02 [0] = 1 */
+	tmp = rtl_read_byte(rtlpriv, REG_SYS_FUNC_EN);
+	rtl_write_byte(rtlpriv, REG_SYS_FUNC_EN, (tmp | BIT(0)));
+	
+	/* beacon setting 
+	 * 14,15. set beacon head page (reg 0x209 and 0x424) */
+	rtl_write_byte(rtlpriv, REG_TDECTRL + 1, (u8)boundary);
+	rtl_write_byte(rtlpriv, REG_TXPKTBUF_BCNQ_BDNY, (u8)boundary);
+	rtl_write_byte(rtlpriv, REG_TXPKTBUF_MGQ_BDNY, (u8)boundary);
+	
+	/* 16.	WMAC_LBK_BF_HD 0x45D[7:0]
+	 * WMAC_LBK_BF_HD */
+	rtl_write_byte(rtlpriv, REG_TXPKTBUF_WMAC_LBK_BF_HD,
+		       (u8)boundary);
+	
+	rtl_write_word(rtlpriv,REG_TRXFF_BNDY, boundary);	
+		
+	/* init LLT 
+	 * 17. init LLT */
+	if (!_rtl8821ae_init_llt_table(hw, boundary)) {
+		RT_TRACE(COMP_INIT, DBG_WARNING,
+			 ("Failed to init LLT table!\n"));
+		return false;
+	}
+	
+	/* reallocate RQPN
+	 * 18. reallocate RQPN and init LLT */
+	rtl_write_word(rtlpriv, REG_RQPN_NPQ, npq_rqpn_value);
+	rtl_write_dword(rtlpriv, REG_RQPN, rqpn_val);
+		
+	/* release Tx pause
+	 * 19. 0x522=0x00 */
+	rtl_write_byte(rtlpriv, REG_TXPAUSE, 0x00);
+	
+	/* enable PCIE DMA
+	 * 20. 0x301[7:0] = 0x00
+	 * 21. 0x284[18] = 0 */	
+	rtl_write_byte(rtlpriv, REG_PCIE_CTRL_REG + 1, 0x00);
+	tmp = rtl_read_byte(rtlpriv, REG_RXDMA_CONTROL);
+	rtl_write_byte(rtlpriv, REG_RXDMA_CONTROL, (tmp&(~BIT(2))));
+		
+	RT_TRACE(COMP_INIT, DBG_LOUD, ("End.\n"));
+	return ret;
+}
+
+void _rtl8821ae_simple_initialize_adapter(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_hal *rtlhal = rtl_hal(rtlpriv);
+	struct rtl_ps_ctl *ppsc = rtl_psc(rtlpriv);
+		
+#if (USE_SPECIFIC_FW_TO_SUPPORT_WOWLAN == 1)
+	/* Re-download normal Fw. */
+	rtl8821ae_set_fw_related_for_wowlan(hw, false);
+#endif
+	
+	/* Re-Initialize LLT table. */
+	if (rtlhal->re_init_llt_table) {
+		u32 rqpn = 0x80e70808;
+		u8 rqpn_npq = 0, boundary = 0xF8;
+		if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE) {
+			rqpn = 0x80e90808;
+			boundary = 0xFA;
+		}
+		if (_rtl8821ae_dynamic_rqpn(hw, boundary, rqpn_npq, rqpn)) 
+			rtlhal->re_init_llt_table = false;
+	}
+
+	ppsc->rfpwr_state = ERFON;
+}
+
+void _rtl8821ae_enable_l1off(struct ieee80211_hw *hw)
+{
+	u8 tmp  = 0;
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+
+	RT_TRACE(COMP_INIT, DBG_LOUD, ("--->\n"));
+
+	tmp = _rtl8821ae_dbi_read(rtlpriv, 0x160);
+	if (!(tmp & (BIT(2) | BIT(3)))) {
+		RT_TRACE(COMP_POWER | COMP_INIT, DBG_LOUD,
+			 ("0x160(%#x)return!!\n", tmp));
+		return;	
+	}	
+
+	tmp = _rtl8821ae_mdio_read(rtlpriv, 0x1b);
+	_rtl8821ae_mdio_write(rtlpriv, 0x1b, (tmp | BIT(4)));
+	
+	tmp = _rtl8821ae_dbi_read(rtlpriv, 0x718);
+	_rtl8821ae_dbi_write(rtlpriv, 0x718, tmp | BIT(5));
+
+	RT_TRACE(COMP_INIT, DBG_LOUD, ("<---\n"));
+}
+
+
+void _rtl8821ae_enable_ltr(struct ieee80211_hw *hw)
+{
+	u8 tmp  = 0;
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+
+	RT_TRACE(COMP_INIT, DBG_LOUD, ("--->\n"));
+		
+	/* Check 0x98[10] */
+	tmp = _rtl8821ae_dbi_read(rtlpriv, 0x99);
+	if (!(tmp & BIT(2))) {
+		RT_TRACE(COMP_INIT, DBG_LOUD,
+			 ("<---0x99(%#x) return!!\n", tmp));
+		return;	
+	}
+
+	/* LTR idle latency, 0x90 for 144us */
+	rtl_write_dword(rtlpriv, 0x798, 0x88908890);
+
+	/* LTR active latency, 0x3c for 60us */
+	rtl_write_dword(rtlpriv, 0x79c, 0x883c883c);
+
+	tmp = rtl_read_byte(rtlpriv, 0x7a4) ;
+	rtl_write_byte(rtlpriv, 0x7a4, (tmp | BIT(4)));
+
+	tmp = rtl_read_byte(rtlpriv, 0x7a4);
+	rtl_write_byte(rtlpriv, 0x7a4, (tmp & (~BIT(0))));
+	rtl_write_byte(rtlpriv, 0x7a4, (tmp | BIT(0)));
+	
+	RT_TRACE(COMP_INIT, DBG_LOUD, ("<---\n"));
+}
+
+bool _rtl8821ae_wowlan_initialize_adapter(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_hal *rtlhal = rtl_hal(rtlpriv);
+	bool init_finished = true;
+	u8 tmp = 0;
+	
+	/* Get Fw wake up reason. */
+	_rtl8821ae_get_wakeup_reason(hw);
+		
+	/* Patch Pcie Rx DMA hang after S3/S4 several times.
+	 * The root cause has not be found. */
+	if (_rtl8821ae_check_pcie_dma_hang(hw))
+		_rtl8821ae_reset_pcie_interface_dma(hw, true, false);
+	
+	/* Prepare Tx/Rx Desc Hw address. */
+	_rtl8821ae_init_trx_desc_hw_address(hw);
+	
+	/* Release Pcie Interface Rx DMA to allow wake packet DMA. */
+	rtl_write_byte(rtlpriv, REG_PCIE_CTRL_REG + 1, 0xFE);
+	RT_TRACE(COMP_POWER, DBG_LOUD, ("Enable PCIE Rx DMA.\n"));
+		
+	/* Check wake up event.
+	 * We should check wake packet bit before disable wowlan by H2C or
+	 * Fw will clear the bit. */
+	tmp = rtl_read_byte(rtlpriv, REG_FTISR + 3);
+	RT_TRACE(COMP_POWER, DBG_LOUD, ("Read REG_FTISR 0x13f = %#X\n", tmp));
+
+	/* Set the WoWLAN related function control disable. */
+	rtl8821ae_set_fw_wowlan_mode(hw, false);
+	rtl8821ae_set_fw_remote_wake_ctrl_cmd(hw, 0);
+
+	if (rtlhal->hw_rof_enable) {
+		tmp = rtl_read_byte(rtlpriv, REG_HSISR + 3);
+		if (tmp & BIT(1)) {
+			/* Clear GPIO9 ISR */
+			rtl_write_byte(rtlpriv, REG_HSISR + 3, tmp | BIT(1));
+			init_finished = false;
+		} else {
+			init_finished = true;
+		}
+	}
+
+	if (init_finished) {
+		_rtl8821ae_simple_initialize_adapter(hw);
+	
+		/* Release Pcie Interface Tx DMA. */
+		rtl_write_byte(rtlpriv, REG_PCIE_CTRL_REG + 1, 0x00);
+		/* Release Pcie RX DMA */
+		rtl_write_byte(rtlpriv, REG_RXDMA_CONTROL, 0x02);
+	
+		tmp = rtl_read_byte(rtlpriv, REG_CR + 1);
+		rtl_write_byte(rtlpriv, REG_CR + 1, (tmp & (~BIT(0))));
+	
+		_rtl8821ae_enable_l1off(hw);
+		_rtl8821ae_enable_ltr(hw);
+	}
+	
+	return init_finished;
+}
+
 int rtl8821ae_hw_init(struct ieee80211_hw *hw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
@@ -1351,15 +1867,18 @@ int rtl8821ae_hw_init(struct ieee80211_hw *hw)
 	bool rtstatus = true;
 	int err;
 	u8 tmp_u1b;
+	bool b_support_remote_wakeup;
 	u32 nav_upper = WIFI_NAV_UPPER_US;
 
-	rtlpriv->rtlhal.being_init_adapter = true;
+	rtlhal->being_init_adapter = true;
+	rtlpriv->cfg->ops->get_hw_reg(hw, HAL_DEF_WOWLAN,
+				      (u8 *) (&b_support_remote_wakeup));
 	rtlpriv->intf_ops->disable_aspm(hw);
 	
 	/*YP wowlan not considered*/
 	
 	tmp_u1b = rtl_read_byte(rtlpriv, REG_CR);
-	if (tmp_u1b!=0 && tmp_u1b != 0xEA) {
+	if (tmp_u1b != 0 && tmp_u1b != 0xEA) {
 		rtlhal->b_mac_func_enable = true;
 		RT_TRACE(COMP_INIT,DBG_LOUD,(" MAC has already power on.\n"));
 	} else {
@@ -1367,10 +1886,20 @@ int rtl8821ae_hw_init(struct ieee80211_hw *hw)
 		rtlhal->fw_ps_state = FW_PS_STATE_ALL_ON_8821AE;
 	}
 
-/*	if (_rtl8821ae_check_pcie_dma_hang(hw)) {
-		_rtl8821ae_reset_pcie_interface_dma(hw,rtlhal->b_mac_func_enable,false);
+	if (b_support_remote_wakeup && rtlhal->b_wake_from_pnp_sleep &&
+	    rtlhal->b_mac_func_enable) {
+	    if (_rtl8821ae_wowlan_initialize_adapter(hw)) {
+	    	rtlhal->being_init_adapter = false;
+		return 0;
+	    }
+	}
+	
+	if (_rtl8821ae_check_pcie_dma_hang(hw)) {
+		_rtl8821ae_reset_pcie_interface_dma(hw,
+						    rtlhal->b_mac_func_enable,
+						    false);
 		rtlhal->b_mac_func_enable = false;
-	} */
+	}
 	
 	rtstatus = _rtl8821ae_init_mac(hw);
 	if (rtstatus != true) {
@@ -1394,6 +1923,7 @@ int rtl8821ae_hw_init(struct ieee80211_hw *hw)
 	} else {
 		rtlhal->bfw_ready = true;
 	}
+	ppsc->b_fw_current_inpsmode = false;
 	rtlhal->fw_ps_state = FW_PS_STATE_ALL_ON_8821AE;
 	rtlhal->bfw_clk_change_in_progress = false;
 	rtlhal->ballow_sw_to_change_hwclc = false;
@@ -1401,7 +1931,7 @@ int rtl8821ae_hw_init(struct ieee80211_hw *hw)
 
 	/*SIC_Init(Adapter);
 	if(pHalData->AMPDUBurstMode)
-		PlatformEFIOWrite1Byte(Adapter,REG_AMPDU_BURST_MODE_8812,  0x7F);*/
+		rtl_write_byte(rtlpriv,REG_AMPDU_BURST_MODE_8812,  0x7F);*/
 	
 	rtl8821ae_phy_mac_config(hw);
 	/* because last function modify RCR, so we update
@@ -1433,13 +1963,15 @@ int rtl8821ae_hw_init(struct ieee80211_hw *hw)
 	_rtl8821ae_enable_aspm_back_door(hw);
 	rtlpriv->intf_ops->enable_aspm(hw);
 
-	//rtl8821ae_bt_hw_init(hw);
+	rtl8821ae_bt_hw_init(hw);
 	rtlpriv->rtlhal.being_init_adapter = false;
 
 	rtlpriv->cfg->ops->set_hw_reg(hw, HW_VAR_NAV_UPPER, (u8 *)&nav_upper);
 
 	//rtl8821ae_dm_check_txpower_tracking(hw);
 	//rtl8821ae_phy_lc_calibrate(hw);
+	if (b_support_remote_wakeup)
+		rtl_write_byte(rtlpriv, REG_WOW_CTRL, 0);
 
 	/* Release Rx DMA*/
 	tmp_u1b = rtl_read_byte(rtlpriv, REG_RXDMA_CONTROL);
@@ -1451,6 +1983,8 @@ int rtl8821ae_hw_init(struct ieee80211_hw *hw)
 
 	/* Release Tx/Rx PCIE DMA if*/
 	rtl_write_byte(rtlpriv, REG_PCIE_CTRL_REG + 1, 0);
+
+	rtl_write_byte(rtlpriv, REG_NAV_CTRL+2,  ((30000+127)/128));
 
 	rtl8821ae_dm_init(hw);
 	rtl8821ae_macid_initialize_mediastatus(hw);
@@ -1472,7 +2006,7 @@ static enum version_8821ae _rtl8821ae_read_chip_version(struct ieee80211_hw *hw)
 
 
 
-	if(rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
+	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
 		rtlphy->rf_type = RF_2T2R;
 	else if(rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE)
 		rtlphy->rf_type = RF_1T1R;
@@ -1480,10 +2014,8 @@ static enum version_8821ae _rtl8821ae_read_chip_version(struct ieee80211_hw *hw)
 	RT_TRACE(COMP_INIT, DBG_LOUD, ("RF_Type is %x!!\n", rtlphy->rf_type));
 
 	
-	if (value32 & TRP_VAUX_EN)
-	{
-		if(rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
-		{
+	if (value32 & TRP_VAUX_EN) {
+		if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE) {
 			if(rtlphy->rf_type == RF_2T2R)
 				version = VERSION_TEST_CHIP_2T2R_8812;
 			else
@@ -1492,9 +2024,8 @@ static enum version_8821ae _rtl8821ae_read_chip_version(struct ieee80211_hw *hw)
 		else
 			version = VERSION_TEST_CHIP_8821;
 	} else {
-		if(rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
-		{
-			u32	rtl_id = ((value32 & CHIP_VER_RTL_MASK) >> 12) +1 ;
+		if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE) {
+			u32 rtl_id = ((value32 & CHIP_VER_RTL_MASK) >> 12) + 1;
 
 			if(rtlphy->rf_type == RF_2T2R)
 				version = (enum version_8821ae)(CHIP_8812 | NORMAL_CHIP | RF_TYPE_2T2R);
@@ -1502,10 +2033,8 @@ static enum version_8821ae _rtl8821ae_read_chip_version(struct ieee80211_hw *hw)
 				version = (enum version_8821ae)(CHIP_8812 | NORMAL_CHIP);
 
 			version = (enum version_8821ae)(version| (rtl_id << 12));
-		}	
-		else if(rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE)
-		{
-			u32	rtl_id = value32 & CHIP_VER_RTL_MASK;
+		} else if (rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE) {
+			u32 rtl_id = value32 & CHIP_VER_RTL_MASK;
 
 			version = (enum version_8821ae)(CHIP_8821 | NORMAL_CHIP | rtl_id);
 		}
@@ -1515,11 +2044,10 @@ static enum version_8821ae _rtl8821ae_read_chip_version(struct ieee80211_hw *hw)
 		 ("Chip RF Type: %s\n", (rtlphy->rf_type == RF_2T2R) ?
 		  "RF_2T2R" : "RF_1T1R"));
 
-	if(rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE)
-	{
+	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE) {
 		/*WL_HWROF_EN.*/
 		value32 = rtl_read_dword(rtlpriv, REG_MULTI_FUNC_CTRL);
-		rtlphy->hw_rof_enable= ((value32 & WL_HWROF_EN) ? 1 : 0);
+		rtlhal->hw_rof_enable = ((value32 & WL_HWROF_EN) ? 1 : 0);
 	}
 
 	switch(version)
@@ -1775,25 +2303,201 @@ static void _rtl8821ae_poweroff_adapter(struct ieee80211_hw *hw)
 	rtl_write_byte(rtlpriv, REG_RSV_CTRL, 0x0e);
 }
 
+void _rtl8821ae_clear_pci_pme_status(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_pci *rtlpci = rtl_pcidev(rtl_pcipriv(hw));
+	u16 cap_hdr;
+	u8 cap_pointer;
+	u8 cap_id = 0xff;
+	u8 pmcs_reg;
+	u8 cnt = 0;
+
+	/* Get the Capability pointer first, 
+	 * the Capability Pointer is located at
+	 * offset 0x34 from the Function Header */
+
+	pci_read_config_byte(rtlpci->pdev, 0x34, &cap_pointer);
+	RT_TRACE(COMP_INIT, DBG_LOUD,
+		 ("PCI configration 0x34 = 0x%2x\n", cap_pointer));
+
+	do {
+		pci_read_config_word(rtlpci->pdev, cap_pointer, &cap_hdr);
+		cap_id = cap_hdr & 0xFF;
+
+		RT_TRACE(COMP_INIT, DBG_LOUD,
+			 ("in pci configration, cap_pointer%x = %x\n",
+			  cap_pointer, cap_id));		
+		
+		if (cap_id == 0x01) {
+			break;
+		} else {
+			/* point to next Capability */
+			cap_pointer = (cap_hdr >> 8) & 0xFF;
+			/* 0: end of pci capability, 0xff: invalid value */
+			if (cap_pointer == 0x00 || cap_pointer == 0xff) {
+				cap_id = 0xff;
+				break;
+			}
+		}
+	} while (cnt++ < 200);
+	
+	if (cap_id == 0x01) {
+		/* Get the PM CSR (Control/Status Register), 
+		 * The PME_Status is located at PM Capatibility offset 5, bit 7
+		 */
+		pci_read_config_byte(rtlpci->pdev, cap_pointer + 5, &pmcs_reg);
+
+		if (pmcs_reg & BIT(7)) {
+			/* PME event occured, clear the PM_Status by write 1 */
+			pmcs_reg = pmcs_reg | BIT(7);
+
+			pci_write_config_byte(rtlpci->pdev, cap_pointer + 5,
+					      pmcs_reg);
+			/* Read it back to check */
+			pci_read_config_byte(rtlpci->pdev, cap_pointer + 5,
+					     &pmcs_reg);
+			RT_TRACE(COMP_INIT, DBG_DMESG,
+				 ("Clear PME status 0x%2x to 0x%2x\n",
+				  cap_pointer + 5, pmcs_reg));
+		} else {
+			RT_TRACE(COMP_INIT, DBG_DMESG,
+				 ("PME status(0x%2x) = 0x%2x\n",
+				  cap_pointer + 5, pmcs_reg));
+		}
+	} else {
+		RT_TRACE(COMP_INIT, DBG_WARNING,
+			 ("Cannot find PME Capability\n"));
+	}
+}
+
 void rtl8821ae_card_disable(struct ieee80211_hw *hw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
-	struct rtl_ps_ctl *ppsc = rtl_psc(rtl_priv(hw));
-	struct rtl_mac *mac = rtl_mac(rtl_priv(hw));
+	struct rtl_hal *rtlhal = rtl_hal(rtlpriv);
+	struct rtl_ps_ctl *ppsc = rtl_psc(rtlpriv);
+	struct rtl_mac *mac = rtl_mac(rtlpriv);
 	enum nl80211_iftype opmode;
+	bool b_support_remote_wakeup;
+	u8 tmp;
+	u32 count = 0;
 
-	RT_TRACE(COMP_INIT, DBG_LOUD,
-		 ("rtl8821ae_card_disable.\n"));
+	rtlpriv->cfg->ops->get_hw_reg(hw, HAL_DEF_WOWLAN,
+				      (u8 *) (&b_support_remote_wakeup));
 
-	mac->link_state = MAC80211_NOLINK;
-	opmode = NL80211_IFTYPE_UNSPECIFIED;
-	_rtl8821ae_set_media_status(hw, opmode);
+	RT_SET_PS_LEVEL(ppsc, RT_RF_OFF_LEVL_HALT_NIC);
+
+	if (!(b_support_remote_wakeup && mac->opmode == NL80211_IFTYPE_STATION)
+	    || !rtlhal->b_enter_pnp_sleep) {
+		RT_TRACE(COMP_INIT, DBG_DMESG, ("Normal Power off\n"));
+		mac->link_state = MAC80211_NOLINK;
+		opmode = NL80211_IFTYPE_UNSPECIFIED;
+		_rtl8821ae_set_media_status(hw, opmode);
+		_rtl8821ae_poweroff_adapter(hw);
+	} else {
+		RT_TRACE(COMP_INIT, DBG_DMESG, ("Wowlan Supported.\n"));
+		/* 3 <1> Prepare for configuring wowlan related infomations */
+		/* Clear Fw WoWLAN event. */
+		rtl_write_byte(rtlpriv, REG_MCUTST_WOWLAN, 0x0);
+				
+#if (USE_SPECIFIC_FW_TO_SUPPORT_WOWLAN == 1)
+		rtl8821ae_set_fw_related_for_wowlan(hw, true);
+#endif
+	/*	tmp = rtl_read_byte(rtlpriv, 0x3);
+		printk("reg3 = 0x%x\n",tmp);
+		rtl_write_byte(rtlpriv, 0x3, tmp & (~BIT(2)));
+		tmp = rtl_read_byte(rtlpriv, 0x3);
+		printk("reg3 = 0x%x\n",tmp); */
+		/* Dynamically adjust Tx packet boundary
+		 * for download reserved page packet.
+		 * reserve 30 pages for rsvd page */ 
+		if (_rtl8821ae_dynamic_rqpn(hw, 0xE0, 0x3, 0x80c20d0d))
+			rtlhal->re_init_llt_table = true;
+		
+		/* 3 <2> Set Fw releted H2C cmd. */
+		
+		/* Set WoWLAN related security information. */
+		rtl8821ae_set_fw_global_info_cmd(hw);
+		
+		_rtl8821ae_download_rsvd_page(hw, true);	
+		
+		/* Just enable AOAC related functions when we connect to AP. */
+		printk("mac->link_state = %d\n",mac->link_state);
+		if (mac->link_state >= MAC80211_LINKED &&
+		    mac->opmode == NL80211_IFTYPE_STATION) {
+			rtlpriv->cfg->ops->set_hw_reg(hw, HW_VAR_AID, 0);			
+			rtl8821ae_set_fw_media_status_rpt_cmd(hw,
+							      RT_MEDIA_CONNECT);
+		
+			rtl8821ae_set_fw_wowlan_mode(hw, true);
+			/* Enable Fw Keep alive mechanism. */
+			rtl8821ae_set_fw_keep_alive_cmd(hw, true);
+					
+			/* Enable disconnect decision control. */
+			rtl8821ae_set_fw_disconnect_decision_ctrl_cmd(hw, true);
+		}
+				
+		/* 3 <3> Hw Configutations */
+		
+		/* Wait untill Rx DMA Finished before host sleep.
+		 * FW Pause Rx DMA may happens when received packet doing dma.
+		 */
+		rtl_write_byte(rtlpriv, REG_RXDMA_CONTROL, BIT(2));
+				 
+		tmp = rtl_read_byte(rtlpriv, REG_RXDMA_CONTROL);
+		count = 0;
+		while (!(tmp & BIT(1)) && (count++ < 100)) {
+			udelay(10);
+			tmp = rtl_read_byte(rtlpriv, REG_RXDMA_CONTROL);
+		}
+		RT_TRACE(COMP_INIT, DBG_LOUD,
+			 ("Wait Rx DMA Finished before host sleep. count=%d\n",
+			  count));
+		
+		/* reset trx ring */
+		rtlpriv->intf_ops->reset_trx_ring(hw);
+				
+		rtl_write_byte(rtlpriv, REG_APS_FSMCO + 1, 0x0);
+		
+		_rtl8821ae_clear_pci_pme_status(hw);
+		tmp = rtl_read_byte(rtlpriv, REG_SYS_CLKR);
+		rtl_write_byte(rtlpriv, REG_SYS_CLKR, tmp | BIT(3));
+		/* prevent 8051 to be reset by PERST */
+		rtl_write_byte(rtlpriv, REG_RSV_CTRL, 0x20);
+		rtl_write_byte(rtlpriv, REG_RSV_CTRL, 0x60);
+	}
+	
 	if (rtlpriv->rtlhal.driver_is_goingto_unload ||
 	    ppsc->rfoff_reason > RF_CHANGE_BY_PS)
 		rtlpriv->cfg->ops->led_control(hw, LED_CTL_POWER_OFF);
-	RT_SET_PS_LEVEL(ppsc, RT_RF_OFF_LEVL_HALT_NIC);
-	_rtl8821ae_poweroff_adapter(hw);
+	/* For wowlan+LPS+32k. */
+	if (b_support_remote_wakeup && rtlhal->b_enter_pnp_sleep) {
+		
+		/* Set the WoWLAN related function control enable.
+		 * It should be the last H2C cmd in the WoWLAN flow. */
+		rtl8821ae_set_fw_remote_wake_ctrl_cmd(hw, 1);
 
+		/* Stop Pcie Interface Tx DMA. */
+		rtl_write_byte(rtlpriv, REG_PCIE_CTRL_REG + 1, 0xff);
+		RT_TRACE(COMP_POWER, DBG_LOUD, ("Stop PCIE Tx DMA.\n"));
+		
+		/* Wait for TxDMA idle. */
+		count = 0;
+		do {
+			tmp = rtl_read_byte(rtlpriv, REG_PCIE_CTRL_REG);
+			udelay(10);
+			count++;
+		} while ((tmp != 0) && (count < 100));
+		RT_TRACE(COMP_INIT, DBG_LOUD,
+			 ("Wait Tx DMA Finished before host sleep. count=%d\n",
+			  count));
+		
+		if (rtlhal->hw_rof_enable) {
+			printk("hw_rof_enable\n");
+			tmp = rtl_read_byte(rtlpriv, REG_HSISR + 3);
+			rtl_write_byte(rtlpriv, REG_HSISR + 3, tmp | BIT(1));
+		}	
+	}
 	/* after power off we should do iqk again */
 	rtlpriv->phy.iqk_initialized = false;
 }
@@ -1932,8 +2636,7 @@ static void _rtl8821ae_read_power_value_fromprom(struct ieee80211_hw *hw,
 	if (0xFF == hwinfo[eeAddr+1])  /*YJ,add,120316*/
 		autoload_fail = true;
 
-	if (autoload_fail)
-	{
+	if (autoload_fail) {
 		RT_TRACE(COMP_INIT, DBG_LOUD, ("auto load fail : Use Default value!\n"));
 		for (rfPath = 0 ; rfPath < MAX_RF_PATH ; rfPath++) {
 			/*2.4G default value*/
@@ -2825,44 +3528,192 @@ static u8 _rtl8821ae_mrate_idx_to_arfr_id(
 	return ret;
 }
 
+u32 _rtl8821ae_rate_to_bitmap_2ssvht(__le16 vht_rate)
+{
+
+	u8 i, j, tmp_rate;
+	u32 rate_bitmap = 0;
+		
+	for(i = j= 0; i < 4; i+=2, j+=10)
+	{
+		tmp_rate = (vht_rate >> i) & 3;
+
+		switch(tmp_rate){
+
+		case 2:
+			rate_bitmap = rate_bitmap | (0x03ff << j);		
+			break;
+
+		case 1:
+			rate_bitmap = rate_bitmap | (0x01ff << j);
+			break;
+
+		case 0:
+			rate_bitmap = rate_bitmap | (0x00ff << j);
+			break;
+
+		default:
+			break;
+		}
+	}
+
+	return rate_bitmap;
+}
+
+u32 _rtl8821ae_set_ra_vht_ratr_bitmap(struct ieee80211_hw *hw, 
+				     enum wireless_mode wirelessmode,
+				     u32 ratr_bitmap)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_phy *rtlphy = &(rtlpriv->phy);
+	u32 ret_bitmap = ratr_bitmap;
+
+	if(rtlphy->current_chan_bw == HT_CHANNEL_WIDTH_20_40 
+		|| rtlphy->current_chan_bw == HT_CHANNEL_WIDTH_80)
+		ret_bitmap = ratr_bitmap;
+	else if (wirelessmode == WIRELESS_MODE_AC_5G 
+		|| wirelessmode == WIRELESS_MODE_AC_24G) {
+		if (rtlphy->rf_type == RF_1T1R)
+			ret_bitmap = ratr_bitmap & (~BIT21);
+		else
+			ret_bitmap = ratr_bitmap & (~(BIT31|BIT21));
+	}
+
+	return ret_bitmap;
+}
+
+u8 _rtl8821ae_get_vht_eni(enum wireless_mode wirelessmode,
+			u32 ratr_bitmap)
+{
+	u8 ret = 0;
+	if(wirelessmode < WIRELESS_MODE_N_24G)
+		ret =  0;
+	else if(wirelessmode == WIRELESS_MODE_AC_24G) {
+		if(ratr_bitmap & 0xfff00000)	// Mix , 2SS
+			ret = 3;
+		else 					// Mix, 1SS
+			ret = 2;
+	} else if(wirelessmode == WIRELESS_MODE_AC_5G) {
+			ret = 1;
+	}// VHT
+
+	return (ret << 4);
+}
+
+u8 _rtl8821ae_get_ra_ldpc(struct ieee80211_hw *hw, 
+		             u8 mac_id, struct rtl_sta_info *sta_entry,
+		             enum wireless_mode wirelessmode)
+{	
+	u8 b_ldpc = 0;
+	/*not support ldpc, do not open*/
+	return (b_ldpc << 2);
+}
+
+u8 _rtl8821ae_get_ra_rftype(struct ieee80211_hw *hw, 
+	 		  enum wireless_mode wirelessmode,
+			  u32 ratr_bitmap)
+{	
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_phy *rtlphy = &(rtlpriv->phy);
+	u8 rf_type = RF_1T1R;
+
+	if(rtlphy->rf_type == RF_1T1R)
+		rf_type = RF_1T1R;
+	else if (wirelessmode == WIRELESS_MODE_AC_5G
+		|| wirelessmode == WIRELESS_MODE_AC_24G
+		|| wirelessmode == WIRELESS_MODE_AC_ONLY) {
+		if(ratr_bitmap & 0xffc00000)
+			rf_type = RF_2T2R;
+	} else if(wirelessmode == WIRELESS_MODE_N_5G 
+		|| wirelessmode == WIRELESS_MODE_N_24G) {
+		if(ratr_bitmap & 0xfff00000)
+			rf_type = RF_2T2R;
+	}
+
+	return rf_type;
+}
+
+bool _rtl8821ae_get_ra_shortgi(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
+			      u8 mac_id)
+{
+/*	u8 b_curtxbw_40mhz = (sta->ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40)
+				? 1 : 0;
+	u8 b_curtxbw_80mhz = (sta->vht_cap.vht_supported && 
+		(!(sta->vht_cap.cap & 
+		IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_160MHZ) )
+		&& (!(sta->vht_cap.cap & 
+		IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_160_80PLUS80MHZ)))
+		? 1 : 0;*/
+	u8 b_curshortgi_40mhz = (sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_40) ?
+				1 : 0;
+	u8 b_curshortgi_20mhz = (sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_20) ?
+				1 : 0;
+	u8 b_curshortgi_80mhz = (sta->vht_cap.cap & 
+				IEEE80211_VHT_CAP_SHORT_GI_80) ?
+				1 : 0;
+	bool b_short_gi =false;
+
+	if(mac_id == MAC_ID_STATIC_FOR_BROADCAST_MULTICAST)
+			b_short_gi = false;
+
+	if (b_curshortgi_40mhz || b_curshortgi_80mhz
+		|| b_curshortgi_20mhz)
+		b_short_gi = true;
+
+	return b_short_gi;
+}
+
+
 static void rtl8821ae_update_hal_rate_mask(struct ieee80211_hw *hw,
 		struct ieee80211_sta *sta, u8 rssi_level)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_phy *rtlphy = &(rtlpriv->phy);
 	struct rtl_mac *mac = rtl_mac(rtl_priv(hw));
-	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
 	struct rtl_sta_info * sta_entry = NULL;
 	u32 ratr_bitmap;
 	u8 ratr_index;
+	enum wireless_mode wirelessmode = 0;
 	u8 b_curtxbw_40mhz = (sta->ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40)
 				? 1 : 0;
-	u8 b_curshortgi_40mhz = (sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_40) ?
-				1 : 0;
-	u8 b_curshortgi_20mhz = (sta->ht_cap.cap & IEEE80211_HT_CAP_SGI_20) ?
-				1 : 0;
-	enum wireless_mode wirelessmode = 0;
 	bool b_shortgi = false;
 	u8 rate_mask[7];
 	u8 macid = 0;
 	u8 mimo_ps = IEEE80211_SMPS_OFF;
+	u8 rf_type;
 
 	sta_entry = (struct rtl_sta_info *) sta->drv_priv;
 	wirelessmode = sta_entry->wireless_mode;
 	if (mac->opmode == NL80211_IFTYPE_STATION ||
-		mac->opmode == NL80211_IFTYPE_MESH_POINT)
+		mac->opmode == NL80211_IFTYPE_MESH_POINT) {
 		b_curtxbw_40mhz = mac->bw_40;
-	else if (mac->opmode == NL80211_IFTYPE_AP ||
+	} else if (mac->opmode == NL80211_IFTYPE_AP ||
 		mac->opmode == NL80211_IFTYPE_ADHOC)
 		macid = sta->aid + 1;
-
-	ratr_bitmap = sta->supp_rates[0];
+	if (wirelessmode == WIRELESS_MODE_N_24G)
+		ratr_bitmap = sta->supp_rates[NL80211_BAND_2GHZ];
+	else if (wirelessmode == WIRELESS_MODE_N_5G )
+		ratr_bitmap = sta->supp_rates[NL80211_BAND_5GHZ];
 	
 	if (mac->opmode == NL80211_IFTYPE_ADHOC)
 		ratr_bitmap = 0xfff;
 	
-	ratr_bitmap |= (sta->ht_cap.mcs.rx_mask[1] << 20 |
-			sta->ht_cap.mcs.rx_mask[0] << 12);
+	if (wirelessmode == WIRELESS_MODE_N_24G 
+		|| wirelessmode == WIRELESS_MODE_N_5G)
+		ratr_bitmap |= (sta->ht_cap.mcs.rx_mask[1] << 20 |
+				sta->ht_cap.mcs.rx_mask[0] << 12);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
+	else if (wirelessmode == WIRELESS_MODE_AC_24G
+		|| wirelessmode == WIRELESS_MODE_AC_5G
+		|| wirelessmode == WIRELESS_MODE_AC_ONLY)
+		ratr_bitmap |= _rtl8821ae_rate_to_bitmap_2ssvht(
+				sta->vht_cap.vht_mcs.rx_mcs_map) << 12;
+#endif
+
+	b_shortgi = _rtl8821ae_get_ra_shortgi(hw, sta, macid);
+	rf_type = _rtl8821ae_get_ra_rftype(hw, wirelessmode, ratr_bitmap);
+
+
 /*mac id owner*/
 	switch (wirelessmode) {
 	case WIRELESS_MODE_B:
@@ -2895,13 +3746,13 @@ static void rtl8821ae_update_hal_rate_mask(struct ieee80211_hw *hw,
 
 		if (mimo_ps == IEEE80211_SMPS_STATIC  || mimo_ps == IEEE80211_SMPS_DYNAMIC) {
 			if (rssi_level == 1)
-				ratr_bitmap &= 0x00070000;
+				ratr_bitmap &= 0x000f0000;
 			else if (rssi_level == 2)
-				ratr_bitmap &= 0x0007f000;
+				ratr_bitmap &= 0x000ff000;
 			else
-				ratr_bitmap &= 0x0007f005;
+				ratr_bitmap &= 0x000ff005;
 		} else {
-			if ( rtlphy->rf_type == RF_1T1R) {
+			if (rf_type == RF_1T1R) {
 				if (b_curtxbw_40mhz) {
 					if (rssi_level == 1)
 						ratr_bitmap &= 0x000f0000;
@@ -2935,14 +3786,6 @@ static void rtl8821ae_update_hal_rate_mask(struct ieee80211_hw *hw,
 				}
 			}
 		}
-		if ((b_curtxbw_40mhz && b_curshortgi_40mhz) ||
-		    (!b_curtxbw_40mhz && b_curshortgi_20mhz)) {
-
-			if (macid == 0)
-				b_shortgi = true;
-			else if (macid == 1)
-				b_shortgi = false;
-		}
 		break;
 
 	case WIRELESS_MODE_AC_24G:
@@ -2958,53 +3801,50 @@ static void rtl8821ae_update_hal_rate_mask(struct ieee80211_hw *hw,
 	case WIRELESS_MODE_AC_5G:
 		ratr_index = RATR_INX_WIRELESS_AC_5N;
 
-		if (rtlphy->rf_type == RF_1T1R)
-		{
-			if(rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
-			{
-				if(rssi_level == 1)				/*add by Gary for ac-series*/
-					ratr_bitmap &= 0x003f8000;
-				else if (rssi_level == 2)
-					ratr_bitmap &= 0x003ff000;
-				else
-					ratr_bitmap &= 0x003ff010;
-			}
-			else 
-				ratr_bitmap &= 0x000ff010;
-		}	
-		else
-		{
-			if(rssi_level == 1)				/* add by Gary for ac-series*/
-				ratr_bitmap &= 0xfe3f8000;       /*VHT 2SS MCS3~9*/
+		if (rf_type == RF_1T1R) {
+			if(rssi_level == 1)				/*add by Gary for ac-series*/
+				ratr_bitmap &= 0x003f8000;
 			else if (rssi_level == 2)
-				ratr_bitmap &= 0xfffff000;       /*VHT 2SS MCS0~9*/
+				ratr_bitmap &= 0x003ff000;
 			else
-				ratr_bitmap &= 0xfffff010;       /*All*/
+				ratr_bitmap &= 0x003ff010;
+		} else {
+			if(rssi_level == 1)		
+				ratr_bitmap &= 0xfe3f8000;
+			else if (rssi_level == 2)
+				ratr_bitmap &= 0xfffff000;
+			else
+				ratr_bitmap &= 0xfffff010;
 		}	
 		break;
 		
 	default:
 		ratr_index = RATR_INX_WIRELESS_NGB;
 
-		if (rtlphy->rf_type == RF_1T2R)
+		if (rf_type == RF_1T2R)
 			ratr_bitmap &= 0x000ff0ff;
 		else
-			ratr_bitmap &= 0x0f0ff0ff;
+			ratr_bitmap &= 0x0f8ff0ff;
 		break;
 		
 	}
 
+	ratr_index = _rtl8821ae_mrate_idx_to_arfr_id(hw, ratr_index, wirelessmode);
 	sta_entry->ratr_index = ratr_index;
+	ratr_bitmap = _rtl8821ae_set_ra_vht_ratr_bitmap(hw, wirelessmode, 
+		                                                               ratr_bitmap);
 
-	RT_TRACE(COMP_RATR, DBG_DMESG,
+	RT_TRACE(COMP_RATR, DBG_LOUD,
 		 ("ratr_bitmap :%x\n", ratr_bitmap));
+	
 	*(u32 *) & rate_mask = EF4BYTE((ratr_bitmap & 0x0fffffff) |
 				       (ratr_index << 28));
+
 	rate_mask[0] = macid;
-	rate_mask[1] = _rtl8821ae_mrate_idx_to_arfr_id(hw, ratr_index, wirelessmode) | (b_shortgi ? 0x80 : 0x00);
-	rate_mask[2] = b_curtxbw_40mhz;
-	/* if (prox_priv->proxim_modeinfo->power_output > 0)
-		rate_mask[2] |= BIT(6); */
+	rate_mask[1] = ratr_index | (b_shortgi ? 0x80 : 0x00);
+	rate_mask[2] = rtlphy->current_chan_bw 
+		           | _rtl8821ae_get_vht_eni(wirelessmode, ratr_bitmap)
+		           | _rtl8821ae_get_ra_ldpc(hw, macid, sta_entry, wirelessmode);
 	
 	rate_mask[3] = (u8)(ratr_bitmap & 0x000000ff);
 	rate_mask[4] = (u8)((ratr_bitmap & 0x0000ff00) >>8);
@@ -3037,15 +3877,31 @@ void rtl8821ae_update_channel_access_setting(struct ieee80211_hw *hw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_mac *mac = rtl_mac(rtl_priv(hw));
+	u8 wireless_mode = mac->mode;
 	u16 sifs_timer;
+	u8 r2t_sifs;
 
 	rtlpriv->cfg->ops->set_hw_reg(hw, HW_VAR_SLOT_TIME,
 				      (u8 *) & mac->slot_time);
-	if (!mac->ht_enable)
+	if (wireless_mode == WIRELESS_MODE_G)
 		sifs_timer = 0x0a0a;
 	else
 		sifs_timer = 0x0e0e;
 	rtlpriv->cfg->ops->set_hw_reg(hw, HW_VAR_SIFS, (u8 *) & sifs_timer);
+
+	r2t_sifs = 0xa;
+	
+	if (wireless_mode == WIRELESS_MODE_AC_5G && 
+		(mac->b_vht_ldpc_rx) && (mac->b_vht_stbc_rx)) {
+		if (mac->vendor == PEER_ATH)
+			r2t_sifs = 0x8;
+		else
+			r2t_sifs = 0xa;
+	} else if (wireless_mode == WIRELESS_MODE_AC_5G ) {
+		r2t_sifs = 0xa;
+	}
+	
+	rtlpriv->cfg->ops->set_hw_reg(hw, HW_VAR_R2T_SIFS, (u8 *) & r2t_sifs);
 }
 
 bool rtl8821ae_gpio_radio_on_off_checking(struct ieee80211_hw *hw, u8 * valid)
@@ -3344,3 +4200,93 @@ void rtl8821ae_allow_all_destaddr(struct ieee80211_hw *hw,
 		rtlpci->receive_config, write_into_reg ));
 }
 
+/* WKFMCAMAddAllEntry8812 */
+void rtl8821ae_add_wowlan_pattern(struct ieee80211_hw *hw,
+				  struct rtl_wow_pattern *rtl_pattern,
+				  u8 index)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	u32 cam = 0;
+	u8 addr = 0;
+	u16 rxbuf_addr;
+	u8 tmp, count = 0;
+	u16 cam_start;
+	u16 offset;
+	
+	/* Count the WFCAM entry start offset. */
+
+	/* RX page size = 128 byte */
+	offset = MAX_RX_DMA_BUFFER_SIZE_8812 / 128;
+	/* We should start from the boundry */ 
+	cam_start = offset * 128;
+	
+	/* Enable Rx packet buffer access. */
+	rtl_write_byte(rtlpriv, REG_PKT_BUFF_ACCESS_CTRL, RXPKT_BUF_SELECT);
+	for (addr = 0; addr < WKFMCAM_ADDR_NUM; addr ++) {
+		/* Set Rx packet buffer offset.
+		 * RxBufer pointer increases 1,
+		 * we can access 8 bytes in Rx packet buffer.
+		 * CAM start offset (unit: 1 byte) =  index*WKFMCAM_SIZE
+		 * RxBufer addr = (CAM start offset + 
+		 *                 per entry offset of a WKFM CAM)/8
+		 *	* index: The index of the wake up frame mask
+		 *	* WKFMCAM_SIZE: the total size of one WKFM CAM
+		 *	* per entry offset of a WKFM CAM: Addr*4 bytes
+		 */
+		rxbuf_addr = (cam_start + index * WKFMCAM_SIZE + addr * 4) >> 3;
+		/* Set R/W start offset */
+		rtl_write_word(rtlpriv, REG_PKTBUF_DBG_CTRL, rxbuf_addr);
+		
+		if (addr == 0) {
+			cam = BIT(31) | rtl_pattern->crc;
+		
+			if (rtl_pattern->type == UNICAST_PATTERN)
+				cam |= BIT(24);
+			else if (rtl_pattern->type == MULTICAST_PATTERN)
+				cam |= BIT(25);
+			else if (rtl_pattern->type == BROADCAST_PATTERN)
+				cam |= BIT(26);
+		
+			rtl_write_dword(rtlpriv, REG_PKTBUF_DBG_DATA_L, cam);
+			RT_TRACE(COMP_POWER, DBG_TRACE,
+				 ("WRITE entry[%d] 0x%x: %x \n", addr,
+				  REG_PKTBUF_DBG_DATA_L, cam));
+		
+			/* Write to Rx packet buffer. */
+			rtl_write_word(rtlpriv, REG_RXPKTBUF_CTRL, 0x0f01);
+		
+		} else if (addr == 2 || addr == 4) {/* WKFM[127:0] */
+			cam = rtl_pattern->mask[addr - 2];
+			
+			rtl_write_dword(rtlpriv, REG_PKTBUF_DBG_DATA_L, cam);
+			RT_TRACE(COMP_POWER, DBG_TRACE,
+				 ("WRITE entry[%d] 0x%x: %x \n", addr,
+				  REG_PKTBUF_DBG_DATA_L, cam));
+
+			rtl_write_word(rtlpriv, REG_RXPKTBUF_CTRL, 0x0f01);
+		
+		} else if (addr == 3 || addr == 5) {/* WKFM[127:0] */
+			cam = rtl_pattern->mask[addr - 2];
+			
+			rtl_write_dword(rtlpriv, REG_PKTBUF_DBG_DATA_H, cam);
+			RT_TRACE(COMP_POWER, DBG_TRACE,
+				 ("WRITE entry[%d] 0x%x: %x \n", addr,
+				  REG_PKTBUF_DBG_DATA_H, cam));
+
+			rtl_write_word(rtlpriv, REG_RXPKTBUF_CTRL, 0xf001);
+		}
+		
+		count=0;
+		do {
+			tmp = rtl_read_byte(rtlpriv, REG_RXPKTBUF_CTRL);
+			udelay(2);
+			count++;
+		} while (tmp && count < 100);
+		
+		RT_ASSERT((count < 100),
+			  ("Write wake up frame mask FAIL %d value!\n", tmp));
+	}
+	/* Disable Rx packet buffer access. */
+	rtl_write_byte(rtlpriv, REG_PKT_BUFF_ACCESS_CTRL,
+		       DISABLE_TRXPKT_BUF_ACCESS);
+}

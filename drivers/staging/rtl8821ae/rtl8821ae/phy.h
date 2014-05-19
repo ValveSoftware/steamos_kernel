@@ -253,6 +253,6 @@ void rtl8812ae_do_iqk(struct ieee80211_hw *hw,u8 delta_thermal_index,
 void rtl8821ae_do_iqk(struct ieee80211_hw *hw,u8 delta_thermal_index,
 	u8 thermal_value, u8 threshold);
 void rtl8821ae_reset_iqk_result(struct ieee80211_hw *hw);
-
+u32 phy_get_tx_bb_swing_8812A(struct ieee80211_hw *hw, u8 band, u8 rf_path);
 
 #endif

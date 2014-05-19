@@ -99,8 +99,9 @@
 #define REG_PCIE_MIO_INTF			0x00E4
 #define REG_PCIE_MIO_INTD			0x00E8
 #define REG_HPON_FSM				0x00EC
-#define REG_SYS_CFG					0x00F0
+#define REG_SYS_CFG				0x00F0
 #define REG_GPIO_OUTSTS				0x00F4
+#define REG_MAC_PHY_CTRL_NORMAL			0x00F8
 #define REG_SYS_CFG1				0x00FC
 #define REG_ROM_VERSION				0x00FD
 
@@ -115,6 +116,7 @@
 #define REG_CPWM					0x012F
 #define REG_FWIMR					0x0130
 #define REG_FWISR					0x0134
+#define REG_FTISR					0x013C
 #define REG_PKTBUF_DBG_CTRL			0x0140
 #define REG_PKTBUF_DBG_DATA_L		0x0144
 #define REG_PKTBUF_DBG_DATA_H		0x0148
@@ -134,6 +136,7 @@
 #define REG_C2HEVT_CLEAR			0x01AF
 #define REG_C2HEVT_MSG_TEST			0x01B8
 #define REG_MCUTST_1				0x01c0
+#define REG_MCUTST_WOWLAN			0x01C7
 #define REG_FMETHR					0x01C8
 #define REG_HMETFR					0x01CC
 #define REG_HMEBOX_0				0x01D0
@@ -175,6 +178,7 @@
 
 #define	REG_DBI_WDATA				0x0348
 #define	REG_DBI_RDATA				0x034C
+#define	REG_DBI_CTRL				0x0350
 #define	REG_DBI_ADDR				0x0350
 #define	REG_DBI_FLAG				0x0352
 #define	REG_MDIO_WDATA				0x0354
@@ -295,7 +299,7 @@
 #define REG_NOA_DESC_INTERVAL		0x05E4
 #define REG_NOA_DESC_START			0x05E8
 #define REG_NOA_DESC_COUNT			0x05EC
-#define REG_SCH_TX_CMD				0x05F8
+#define REG_SCH_TXCMD				0x05F8
 
 #define REG_APSD_CTRL				0x0600
 #define REG_BWOPMODE				0x0603
@@ -1256,7 +1260,7 @@
 #define USB_AGG_EN					BIT(3)
 
 #define MAC_ADDR_LEN				6
-#define LAST_ENTRY_OF_TX_PKT_BUFFER	175/*255    88e*/
+#define LAST_ENTRY_OF_TX_PKT_BUFFER	255
 
 #define POLLING_LLT_THRESHOLD		20
 #define POLLING_READY_TIMEOUT_COUNT		3000
@@ -2323,18 +2327,6 @@
 
 #define	REG_UN_used_register		0x01bf
 
-/* WOL bit information */
-#define	HAL92C_WOL_PTK_UPDATE_EVENT		BIT(0)
-#define	HAL92C_WOL_GTK_UPDATE_EVENT		BIT(1)
-#define	HAL92C_WOL_DISASSOC_EVENT		BIT(2)
-#define	HAL92C_WOL_DEAUTH_EVENT			BIT(3)
-#define	HAL92C_WOL_FW_DISCONNECT_EVENT	BIT(4)
-
-#define		WOL_REASON_PTK_UPDATE		BIT(0)
-#define		WOL_REASON_GTK_UPDATE		BIT(1)
-#define		WOL_REASON_DISASSOC			BIT(2)
-#define		WOL_REASON_DEAUTH			BIT(3)
-#define		WOL_REASON_FW_DISCONNECT	BIT(4)
 
 #define		RA_RFE_PINMUX	0xcb0  /* Path_A RFE cotrol pinmux*/
 #define		RB_RFE_PINMUX	0xeb0 /* Path_B RFE control pinmux*/

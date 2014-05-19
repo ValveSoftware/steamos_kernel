@@ -41,7 +41,7 @@ u8 rtl_query_rxpwrpercentage(char antpower)
 	else
 		return (100 + antpower);
 }
-//EXPORT_SYMBOL(rtl_query_rxpwrpercentage);
+EXPORT_SYMBOL(rtl_query_rxpwrpercentage);
 
 u8 rtl_evm_db_to_percentage(char value)
 {
@@ -59,7 +59,7 @@ u8 rtl_evm_db_to_percentage(char value)
 
 	return ret_val;
 }
-//EXPORT_SYMBOL(rtl_evm_db_to_percentage);
+EXPORT_SYMBOL(rtl_evm_db_to_percentage);
 
 long rtl_translate_todbm(struct ieee80211_hw *hw,
 			 u8 signal_strength_index)
@@ -98,7 +98,7 @@ long rtl_signal_scale_mapping(struct ieee80211_hw *hw, long currsig)
 
 	return retsig;
 }
-//EXPORT_SYMBOL(rtl_signal_scale_mapping);
+EXPORT_SYMBOL(rtl_signal_scale_mapping);
 
 void rtl_process_ui_rssi(struct ieee80211_hw *hw, struct rtl_stats *pstatus)
 {
@@ -280,4 +280,4 @@ void rtl_process_phyinfo(struct ieee80211_hw *hw, u8 *buffer,
 	rtl_process_pwdb(hw, pstatus);
 	rtl_process_ui_link_quality(hw, pstatus);
 }
-//EXPORT_SYMBOL(rtl_process_phyinfo);
+EXPORT_SYMBOL(rtl_process_phyinfo);

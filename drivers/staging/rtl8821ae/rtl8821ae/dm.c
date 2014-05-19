@@ -482,7 +482,7 @@ void rtl8821ae_dm_clear_txpower_tracking_state(struct ieee80211_hw *hw)
 	rtldm->bb_swing_idx_cck = rtldm->default_cck_index;
 	rtldm->cck_index = 0;
 	
-	for (p = RF90_PATH_A; p < MAX_RF_PATH; ++p) {
+	for (p = RF90_PATH_A; p <= RF90_PATH_B; ++p) {
 		rtldm->bb_swing_idx_ofdm_base[p] = rtldm->default_ofdm_index;
 		rtldm->bb_swing_idx_ofdm[p] = rtldm->default_ofdm_index;
 		rtldm->ofdm_index[p] = rtldm->default_ofdm_index;
@@ -509,7 +509,8 @@ u8  rtl8821ae_dm_get_swing_index(struct ieee80211_hw *hw)
 	u8 i = 0;
 	u32  bb_swing;
 	
-	bb_swing =rtl8821ae_phy_query_bb_reg(hw, rtlhal->current_bandtype, RF90_PATH_A);
+	bb_swing = phy_get_tx_bb_swing_8812A(hw, rtlhal->current_bandtype, 
+					      RF90_PATH_A);
 
 	for (i = 0; i < TXSCALE_TABLE_SIZE; ++i)
 		if ( bb_swing == rtl8821ae_txscaling_table[i])
@@ -555,12 +556,12 @@ void rtl8821ae_dm_initialize_txpower_tracking_thermalmeter(
 		rtldm->delta_power_index_last[p] = 0;
 	}
 }
-
+#if 0
 static void rtl8821ae_dm_initialize_txpower_tracking(struct ieee80211_hw *hw)
 {
 	rtl8821ae_dm_initialize_txpower_tracking_thermalmeter(hw);
 }
-
+#endif
 static void rtl8821ae_dm_init_dynamic_bb_powersaving(struct ieee80211_hw *hw)
 {
 	dm_pstable.pre_ccastate = CCA_MAX;
@@ -775,7 +776,6 @@ void  rtl8812ae_dm_rssi_dump_to_register(
 static void rtl8821ae_dm_check_rssi_monitor(struct ieee80211_hw *hw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
-	struct rtl_mac *mac = rtl_mac(rtl_priv(hw));
 	struct rtl_sta_info *drv_priv;
 	u8 h2c_parameter[3] = { 0 };
 	long tmp_entry_max_pwdb = 0, tmp_entry_min_pwdb = 0xff;
@@ -1131,12 +1131,6 @@ void rtl8812ae_dm_check_txpower_tracking_thermalmeter(
 	}
 }
 
-static void rtl8821ae_dm_dynamic_txpower(struct ieee80211_hw *hw)
-{
-	/* 8723BE does not support ODM_BB_DYNAMIC_TXPWR*/
-	return;
-}
-
 static void rtl8821ae_dm_iq_calibrate(struct ieee80211_hw *hw)
 {
 	struct rtl_mac *mac = rtl_mac(rtl_priv(hw));
@@ -1165,7 +1159,7 @@ static void rtl8821ae_dm_iq_calibrate(struct ieee80211_hw *hw)
 	}
 }
 
-
+#if 0
 static void rtl8821ae_set_iqk_matrix(struct ieee80211_hw *hw,
 	u8 ofdm_index,
 	u8 rfpath,
@@ -1214,7 +1208,6 @@ static void rtl8821ae_set_iqk_matrix(struct ieee80211_hw *hw,
 		}
 	}
 }
-
 
 static void rtl8821ae_dm_tx_power_track_set_power(struct ieee80211_hw *hw,
 	enum pwr_track_control_method method,
@@ -1266,7 +1259,7 @@ static void rtl8821ae_dm_tx_power_track_set_power(struct ieee80211_hw *hw,
 		return;
 	}
 }
-
+#endif
 void rtl8812ae_get_delta_swing_table(
 	struct ieee80211_hw *hw,
 	u8 **temperature_up_a,
@@ -1323,7 +1316,6 @@ void rtl8812ae_phy_lccalibrate(
 	struct ieee80211_hw *hw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
-	bool b_start_cont_tx = false, b_single_tone = false, b_carrier_suppression = false;
 	
 
 	RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, ("===> rtl8812ae_phy_lccalibrate\n"));
@@ -1455,8 +1447,6 @@ void rtl8812ae_dm_txpwr_track_set_pwr(struct ieee80211_hw *hw,
 	u8 pwr_tracking_limit = 26; /*+1.0dB*/
 	u8 tx_rate = 0xFF;
 	char final_ofdm_swing_index = 0; 
-	char final_cck_swing_index = 0; 
-	u8 i = 0;
 
 	if(rtldm->tx_rate != 0xFF)
 		tx_rate = rtl8812ae_hw_rate_to_mrate(hw, rtldm->tx_rate); 
@@ -1531,8 +1521,8 @@ void rtl8812ae_dm_txpwr_track_set_pwr(struct ieee80211_hw *hw,
 				(rtldm->ofdm_index[RF90_PATH_A] > pwr_tracking_limit) ?
 				pwr_tracking_limit : rtldm->ofdm_index[RF90_PATH_A];
 			RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, 
-				("pDM_Odm->RFCalibrateInfo.OFDM_index[ODM_RF_PATH_A]=%d, \
-				pDM_Odm->RealBbSwingIdx[ODM_RF_PATH_A]=%d\n",
+				("pDM_Odm->RFCalibrateInfo.OFDM_index[ODM_RF_PATH_A]=%d,"
+				"pDM_Odm->RealBbSwingIdx[ODM_RF_PATH_A]=%d\n",
 				rtldm->ofdm_index[RF90_PATH_A], final_bb_swing_idx[RF90_PATH_A]));
 			
 			rtl_set_bbreg(hw, RA_TXSCALE, 0xFFE00000, rtl8812ae_txscaling_table[final_bb_swing_idx[RF90_PATH_A]]);
@@ -1541,16 +1531,16 @@ void rtl8812ae_dm_txpwr_track_set_pwr(struct ieee80211_hw *hw,
 				rtldm->ofdm_index[RF90_PATH_B] > pwr_tracking_limit ? \
 				pwr_tracking_limit : rtldm->ofdm_index[RF90_PATH_B];
 			RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, 
-				("pDM_Odm->RFCalibrateInfo.OFDM_index[ODM_RF_PATH_B]=%d, \
-				pDM_Odm->RealBbSwingIdx[ODM_RF_PATH_B]=%d\n",
+				("pDM_Odm->RFCalibrateInfo.OFDM_index[ODM_RF_PATH_B]=%d, "
+				"pDM_Odm->RealBbSwingIdx[ODM_RF_PATH_B]=%d\n",
 				rtldm->ofdm_index[RF90_PATH_B], final_bb_swing_idx[RF90_PATH_B]));
 			
 			rtl_set_bbreg(hw, RB_TXSCALE, 0xFFE00000, rtl8812ae_txscaling_table[final_bb_swing_idx[RF90_PATH_B]]);
 		}
 	} else if (method == MIX_MODE) {
 		RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, 
-			("pDM_Odm->DefaultOfdmIndex=%d, \
-			pDM_Odm->Aboslute_OFDMSwingIdx[RFPath]=%d, RF_Path = %d\n",
+			("pDM_Odm->DefaultOfdmIndex=%d, "
+			"pDM_Odm->Aboslute_OFDMSwingIdx[RFPath]=%d, RF_Path = %d\n",
 			rtldm->default_ofdm_index, rtldm->aboslute_ofdm_swing_idx[rf_path],
 			rf_path ));
 		
@@ -1590,7 +1580,7 @@ void rtl8812ae_dm_txpwr_track_set_pwr(struct ieee80211_hw *hw,
 					("******Path_A Lower then BBSwing lower bound  0 , Remnant TxAGC Value = %d \n",
 					 rtldm->remnant_ofdm_swing_idx[rf_path]));
 			} else {
-				rtl_set_bbreg(hw, RA_TXSCALE, 0xFFE00000, rtl8812ae_txscaling_table[final_ofdm_swing_index]);
+				rtl_set_bbreg(hw, RA_TXSCALE, 0xFFE00000, rtl8812ae_txscaling_table[(u8)final_ofdm_swing_index]);
 
 				RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, 
 					("******Path_A Compensate with BBSwing , Final_OFDM_Swing_Index = %d \n", 
@@ -1639,7 +1629,7 @@ void rtl8812ae_dm_txpwr_track_set_pwr(struct ieee80211_hw *hw,
 					("******Path_B Lower then BBSwing lower bound  0 , Remnant TxAGC Value = %d \n", 
 					rtldm->remnant_ofdm_swing_idx[rf_path] ));
 			} else {
-				rtl_set_bbreg(hw, RB_TXSCALE, 0xFFE00000, rtl8812ae_txscaling_table[final_ofdm_swing_index]);
+				rtl_set_bbreg(hw, RB_TXSCALE, 0xFFE00000, rtl8812ae_txscaling_table[(u8)final_ofdm_swing_index]);
 
 				RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, 
 					("******Path_B Compensate with BBSwing , Final_OFDM_Swing_Index = %d \n", 
@@ -2082,10 +2072,7 @@ void rtl8821ae_get_delta_swing_table(
 void rtl8821ae_phy_lccalibrate(
 	struct ieee80211_hw *hw)
 {
-	struct rtl_priv *rtlpriv = rtl_priv(hw);
-	bool b_start_cont_tx = false, b_single_tone = false, b_carrier_suppression = false;
-	
-
+   	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, ("===> rtl8812ae_phy_lccalibrate\n"));
 
 	RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, ("<=== rtl8812ae_phy_lccalibrate\n"));
@@ -2119,8 +2106,6 @@ void rtl8821ae_dm_txpwr_track_set_pwr(struct ieee80211_hw *hw,
 	u8 pwr_tracking_limit = 26; /*+1.0dB*/
 	u8 tx_rate = 0xFF;
 	char final_ofdm_swing_index = 0; 
-	char final_cck_swing_index = 0; 
-	u8 i = 0;
 
 	if(rtldm->tx_rate != 0xFF)
 		tx_rate = rtl8812ae_hw_rate_to_mrate(hw, rtldm->tx_rate); 
@@ -2231,7 +2216,7 @@ void rtl8821ae_dm_txpwr_track_set_pwr(struct ieee80211_hw *hw,
 					("******Path_A Lower then BBSwing lower bound  0 , Remnant TxAGC Value = %d \n",
 					 rtldm->remnant_ofdm_swing_idx[rf_path]));
 			} else {
-				rtl_set_bbreg(hw, RA_TXSCALE, 0xFFE00000, rtl8812ae_txscaling_table[final_ofdm_swing_index]);
+				rtl_set_bbreg(hw, RA_TXSCALE, 0xFFE00000, rtl8812ae_txscaling_table[(u8)final_ofdm_swing_index]);
 
 				RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, 
 					("******Path_A Compensate with BBSwing , Final_OFDM_Swing_Index = %d \n", 
@@ -2775,9 +2760,9 @@ static void rtl8821ae_dm_check_edca_turbo(struct ieee80211_hw *hw)
 
 	if (b_edca_turbo_on) {
 		RT_TRACE(COMP_TURBO, DBG_LOUD,  
-			("curTxOkCnt : 0x%lx \n",cur_tx_ok_cnt));
+			("curTxOkCnt : 0x%llx \n",cur_tx_ok_cnt));
 		RT_TRACE(COMP_TURBO, DBG_LOUD,  
-			("curRxOkCnt : 0x%lx \n",cur_rx_ok_cnt));
+			("curRxOkCnt : 0x%llx \n",cur_rx_ok_cnt));
 		if(b_bias_on_rx)
 			rtl8821ae_dm_edca_choose_traffic_idx(hw, cur_tx_ok_cnt, 
 				cur_rx_ok_cnt, true, pb_is_cur_rdl_state);
@@ -2806,7 +2791,6 @@ static void rtl8821ae_dm_check_edca_turbo(struct ieee80211_hw *hw)
 		rtlpriv->dm.bcurrent_turbo_edca = false;
 	}
 
-dm_CheckEdcaTurbo_EXIT:
 	rtlpriv->dm.bis_any_nonbepkts = false;
 	rtldm->last_tx_ok_cnt = rtlpriv->stats.txbytesunicast;
 	rtldm->last_rx_ok_cnt = rtlpriv->stats.rxbytesunicast;
@@ -3113,6 +3097,8 @@ void rtl8821ae_dm_watchdog(struct ieee80211_hw *hw)
 	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
 	bool b_fw_current_inpsmode = false;
 	bool b_fw_ps_awake = true;
+
+//	return;
 	
 	rtlpriv->cfg->ops->get_hw_reg(hw, HW_VAR_FW_PSMODE_STATUS,
 				      (u8 *) (&b_fw_current_inpsmode));
@@ -3140,9 +3126,6 @@ void rtl8821ae_dm_watchdog(struct ieee80211_hw *hw)
 		else
 			rtl8821ae_dm_check_txpower_tracking_thermalmeter(hw);
 		rtl8821ae_dm_iq_calibrate(hw);
-		if (rtlpriv->cfg->ops->get_btc_status()){
-			rtlpriv->btcoexist.btc_ops->btc_periodical(rtlpriv);
-		}
 	}
 
 	rtlpriv->dm.dbginfo.num_qry_beacon_pkt = 0;

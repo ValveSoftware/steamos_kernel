@@ -28,6 +28,7 @@
 
 #ifndef __RTL8821AE__FW__H__
 #define __RTL8821AE__FW__H__
+#include "def.h"
 
 #define FW_8821AE_SIZE					0x8000
 #define FW_8821AE_START_ADDRESS			0x1000
@@ -57,6 +58,7 @@
 #endif
 #define H2C_8821AE_AOAC_GLOBAL_INFO_LEN	2
 #define H2C_8821AE_AOAC_RSVDPAGE_LOC_LEN	7
+#define H2C_8821AE_DISCONNECT_DECISION_CTRL_LEN	3
 
 
 /* Fw PS state for RPWM.
@@ -168,17 +170,11 @@ enum rtl8812_c2h_evt{
 
 enum rtl8821a_h2c_cmd {
 	H2C_8821AE_RSVDPAGE = 0,
-	H2C_8821AE_JOINBSSRPT = 1,
+	H2C_8821AE_MSRRPT = 1,
 	H2C_8821AE_SCAN = 2,
 	H2C_8821AE_KEEP_ALIVE_CTRL = 3,
 	H2C_8821AE_DISCONNECT_DECISION = 4,
-#if(USE_OLD_WOWLAN_DEBUG_FW == 1)
-	H2C_8821AE_WO_WLAN = 5,
-#endif
 	H2C_8821AE_INIT_OFFLOAD = 6,
-#if(USE_OLD_WOWLAN_DEBUG_FW == 1)
-	H2C_8821AE_REMOTE_WAKE_CTRL = 7,
-#endif
 	H2C_8821AE_AP_OFFLOAD = 8,
 	H2C_8821AE_BCN_RSVDPAGE = 9,
 	H2C_8821AE_PROBERSP_RSVDPAGE = 10,
@@ -189,12 +185,11 @@ enum rtl8821a_h2c_cmd {
 	H2C_8821AE_PS_LPS_PARA = 0x23,
 	H2C_8821AE_P2P_PS_OFFLOAD = 024,
 
-#if(USE_OLD_WOWLAN_DEBUG_FW == 0)
 	H2C_8821AE_WO_WLAN = 0x80,
 	H2C_8821AE_REMOTE_WAKE_CTRL = 0x81,
 	H2C_8821AE_AOAC_GLOBAL_INFO = 0x82,
 	H2C_8821AE_AOAC_RSVDPAGE = 0x83,
-#endif
+
 	H2C_RSSI_REPORT = 0x42,
 	H2C_8821AE_RA_MASK = 0x40,
 	H2C_8821AE_SELECTIVE_SUSPEND_ROF_CMD,
@@ -207,26 +202,26 @@ enum rtl8821a_h2c_cmd {
 
 #define pagenum_128(_len)		(u32)(((_len)>>7) + ((_len)&0x7F ? 1:0))
 
-#define SET_8821AE_H2CCMD_WOWLAN_FUNC_ENABLE(__pH2CCmd, __Value)		\
+#define SET_8812_H2CCMD_WOWLAN_FUNC_ENABLE(__pH2CCmd, __Value)		\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 0, 1, __Value)
-#define SET_8821AE_H2CCMD_WOWLAN_PATTERN_MATCH_ENABLE(__pH2CCmd, __Value)		\
+#define SET_8812_H2CCMD_WOWLAN_PATTERN_MATCH_ENABLE(__pH2CCmd, __Value)	\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 1, 1, __Value)
-#define SET_8821AE_H2CCMD_WOWLAN_MAGIC_PKT_ENABLE(__pH2CCmd, __Value)		\
+#define SET_8812_H2CCMD_WOWLAN_MAGIC_PKT_ENABLE(__pH2CCmd, __Value)	\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 2, 1, __Value)
-#define SET_8821AE_H2CCMD_WOWLAN_UNICAST_PKT_ENABLE(__pH2CCmd, __Value)		\
+#define SET_8812_H2CCMD_WOWLAN_UNICAST_PKT_ENABLE(__pH2CCmd, __Value)	\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 3, 1, __Value)
-#define SET_8821AE_H2CCMD_WOWLAN_ALL_PKT_DROP(__pH2CCmd, __Value)		\
+#define SET_8812_H2CCMD_WOWLAN_ALL_PKT_DROP(__pH2CCmd, __Value)		\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 4, 1, __Value)
-#define SET_8821AE_H2CCMD_WOWLAN_GPIO_ACTIVE(__pH2CCmd, __Value)				\
+#define SET_8812_H2CCMD_WOWLAN_GPIO_ACTIVE(__pH2CCmd, __Value)		\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 5, 1, __Value)
-#define SET_8821AE_H2CCMD_WOWLAN_REKEY_WAKE_UP(__pH2CCmd, __Value)		\
+#define SET_8812_H2CCMD_WOWLAN_REKEY_WAKE_UP(__pH2CCmd, __Value)	\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 6, 1, __Value)
-#define SET_8821AE_H2CCMD_WOWLAN_DISCONNECT_WAKE_UP(__pH2CCmd, __Value)		\
+#define SET_8812_H2CCMD_WOWLAN_DISCONNECT_WAKE_UP(__pH2CCmd, __Value)	\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 7, 1, __Value)
-#define SET_8821AE_H2CCMD_WOWLAN_GPIONUM(__pH2CCmd, __Value)					\
-	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+1, 0, 8, __Value)
-#define SET_8821AE_H2CCMD_WOWLAN_GPIO_DURATION(__pH2CCmd, __Value)			\
-	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+2, 0, 8, __Value)
+#define SET_8812_H2CCMD_WOWLAN_GPIONUM(__pH2CCmd, __Value)		\
+	SET_BITS_TO_LE_1BYTE((__pH2CCmd) + 1, 0, 8, __Value)
+#define SET_8812_H2CCMD_WOWLAN_GPIO_DURATION(__pH2CCmd, __Value)	\
+	SET_BITS_TO_LE_1BYTE((__pH2CCmd) + 2, 0, 8, __Value)
 
 
 #define SET_H2CCMD_PWRMODE_PARM_MODE(__ph2ccmd, __val)			\
@@ -246,12 +241,22 @@ enum rtl8821a_h2c_cmd {
 
 #define SET_H2CCMD_JOINBSSRPT_PARM_OPMODE(__ph2ccmd, __val)		\
 	SET_BITS_TO_LE_1BYTE(__ph2ccmd, 0, 8, __val)
-#define SET_H2CCMD_RSVDPAGE_LOC_PROBE_RSP(__ph2ccmd, __val)		\
-	SET_BITS_TO_LE_1BYTE(__ph2ccmd, 0, 8, __val)
 #define SET_H2CCMD_RSVDPAGE_LOC_PSPOLL(__ph2ccmd, __val)		\
 	SET_BITS_TO_LE_1BYTE((__ph2ccmd)+1, 0, 8, __val)
 #define SET_H2CCMD_RSVDPAGE_LOC_NULL_DATA(__ph2ccmd, __val)		\
 	SET_BITS_TO_LE_1BYTE((__ph2ccmd)+2, 0, 8, __val)
+#define SET_H2CCMD_RSVDPAGE_LOC_QOS_NULL_DATA(__ph2ccmd, __val)		\
+	SET_BITS_TO_LE_1BYTE((__ph2ccmd)+3, 0, 8, __val)
+
+/* _MEDIA_STATUS_RPT_PARM_CMD1 */
+#define SET_H2CCMD_MSRRPT_PARM_OPMODE(__pH2CCmd, __Value)	\
+	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 0, 1, __Value)
+#define SET_H2CCMD_MSRRPT_PARM_MACID_IND(__pH2CCmd, __Value)	\
+	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 1, 1, __Value)
+#define SET_H2CCMD_MSRRPT_PARM_MACID(__pH2CCmd, __Value)	\
+	SET_BITS_TO_LE_1BYTE(__pH2CCmd+1, 0, 8, __Value)
+#define SET_H2CCMD_MSRRPT_PARM_MACID_END(__pH2CCmd, __Value)	\
+	SET_BITS_TO_LE_1BYTE(__pH2CCmd+2, 0, 8, __Value)
 
 /* AP_OFFLOAD */
 #define SET_H2CCMD_AP_OFFLOAD_ON(__pH2CCmd, __Value)	\
@@ -264,34 +269,29 @@ enum rtl8821a_h2c_cmd {
 	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+3, 0, 8, __Value)
 
 /* Keep Alive Control*/
-#define SET_8821AE_H2CCMD_KEEP_ALIVE_ENABLE(__pH2CCmd, __Value)				\
+#define SET_8812_H2CCMD_KEEP_ALIVE_ENABLE(__pH2CCmd, __Value)				\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 0, 1, __Value)
-#define SET_8821AE_H2CCMD_KEEP_ALIVE_ACCPEPT_USER_DEFINED(__pH2CCmd, __Value)	\
+#define SET_8812_H2CCMD_KEEP_ALIVE_ACCPEPT_USER_DEFINED(__pH2CCmd, __Value)	\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 1, 1, __Value)
-#define SET_8821AE_H2CCMD_KEEP_ALIVE_PERIOD(__pH2CCmd, __Value)				\
+#define SET_8812_H2CCMD_KEEP_ALIVE_PERIOD(__pH2CCmd, __Value)				\
 	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+1, 0, 8, __Value)
 
 /*REMOTE_WAKE_CTRL */
-#define SET_8821AE_H2CCMD_REMOTE_WAKE_CTRL_EN(__pH2CCmd, __Value)				\
+#define SET_8812_H2CCMD_REMOTE_WAKECTRL_ENABLE(__pH2CCmd, __Value)	\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 0, 1, __Value)
-#if(USE_OLD_WOWLAN_DEBUG_FW == 0)
-#define SET_8821AE_H2CCMD_REMOTE_WAKE_CTRL_ARP_OFFLOAD_EN(__pH2CCmd, __Value)				\
+#define SET_8812_H2CCMD_REMOTE_WAKE_CTRL_ARP_OFFLOAD_EN(__pH2CCmd, __Value)\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 1, 1, __Value)
-#define SET_8821AE_H2CCMD_REMOTE_WAKE_CTRL_NDP_OFFLOAD_EN(__pH2CCmd, __Value)				\
+#define SET_8812_H2CCMD_REMOTE_WAKE_CTRL_NDP_OFFLOAD_EN(__pH2CCmd, __Value)\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 2, 1, __Value)
-#define SET_8821AE_H2CCMD_REMOTE_WAKE_CTRL_GTK_OFFLOAD_EN(__pH2CCmd, __Value)				\
+#define SET_8812_H2CCMD_REMOTE_WAKE_CTRL_GTK_OFFLOAD_EN(__pH2CCmd, __Value)\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 3, 1, __Value)
-#else
-#define SET_8821AE_H2CCMD_REMOTE_WAKE_CTRL_PAIRWISE_ENC_ALG(__pH2CCmd, __Value)		\
-	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+1, 0, 8, __Value)
-#define SET_8821AE_H2CCMD_REMOTE_WAKE_CTRL_GROUP_ENC_ALG(__pH2CCmd, __Value)		\
-	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+2, 0, 8, __Value)
-#endif
+#define SET_8812_H2CCMD_REMOTE_WAKE_CTRL_REALWOWV2_EN(__pH2CCmd, __Value)\
+	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 6, 1, __Value)
 
 /* GTK_OFFLOAD */
-#define SET_8821AE_H2CCMD_AOAC_GLOBAL_INFO_PAIRWISE_ENC_ALG(__pH2CCmd, __Value)		\
+#define SET_8812_H2CCMD_AOAC_GLOBAL_INFO_PAIRWISE_ENC_ALG(__pH2CCmd, __Value)		\
 	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 0, 8, __Value)
-#define SET_8821AE_H2CCMD_AOAC_GLOBAL_INFO_GROUP_ENC_ALG(__pH2CCmd, __Value)		\
+#define SET_8812_H2CCMD_AOAC_GLOBAL_INFO_GROUP_ENC_ALG(__pH2CCmd, __Value)		\
 	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+1, 0, 8, __Value)
 
 /* AOAC_RSVDPAGE_LOC */
@@ -305,17 +305,46 @@ enum rtl8821a_h2c_cmd {
 	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+3, 0, 8, __Value)
 #define SET_8821AE_H2CCMD_AOAC_RSVDPAGE_LOC_GTK_INFO(__pH2CCmd, __Value)			\
 	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+4, 0, 8, __Value)
+#define SET_8821AE_H2CCMD_AOAC_RSVDPAGE_LOC_GTK_EXT_MEM(__pH2CCmd, __Value)			\
+	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+5, 0, 8, __Value)
 
-int rtl8821ae_download_fw(struct ieee80211_hw *hw,
-				bool buse_wake_on_wlan_fw);
+/* Disconnect_Decision_Control */
+#define SET_8812_H2CCMD_DISCONNECT_DECISION_CTRL_ENABLE(__pH2CCmd, __Value)	\
+	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 0, 1, __Value)
+#define SET_8812_H2CCMD_DISCONNECT_DECISION_CTRL_USER_SETTING(__pH2CCmd, __Value)\
+	SET_BITS_TO_LE_1BYTE(__pH2CCmd, 1, 1, __Value)
+#define SET_8812_H2CCMD_DISCONNECT_DECISION_CTRL_CHECK_PERIOD(__pH2CCmd, __Value)\
+	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+1, 0, 8, __Value) // unit: beacon period
+#define SET_8812_H2CCMD_DISCONNECT_DECISION_CTRL_TRYPKT_NUM(__pH2CCmd, __Value)	\
+	SET_BITS_TO_LE_1BYTE((__pH2CCmd)+2, 0, 8, __Value)
+
+int rtl8821ae_download_fw(struct ieee80211_hw *hw, bool buse_wake_on_wlan_fw);
+#if (USE_SPECIFIC_FW_TO_SUPPORT_WOWLAN == 1)
+void rtl8821ae_set_fw_related_for_wowlan(struct ieee80211_hw *hw,
+					 bool used_wowlan_fw);
+
+#endif
 void rtl8821ae_fill_h2c_cmd(struct ieee80211_hw *hw, u8 element_id,
 			 u32 cmd_len, u8 *p_cmdbuffer);
 void rtl8821ae_firmware_selfreset(struct ieee80211_hw *hw);
 void rtl8821ae_set_fw_pwrmode_cmd(struct ieee80211_hw *hw, u8 mode);
-void rtl8821ae_set_fw_joinbss_report_cmd(struct ieee80211_hw *hw, u8 mstatus);
-void rtl8821ae_set_fw_ap_off_load_cmd(struct ieee80211_hw *hw,  u8 ap_offload_enable);
-void rtl8821ae_set_fw_rsvdpagepkt(struct ieee80211_hw *hw, bool b_dl_finished);
-void rtl8812ae_set_fw_rsvdpagepkt(struct ieee80211_hw *hw, bool b_dl_finished);
-void rtl8821ae_set_p2p_ps_offload_cmd(struct ieee80211_hw *hw, u8 p2p_ps_state);
-void rtl8812ae_c2h_packet_handler(struct ieee80211_hw *hw, u8 *buffer, u8 length);
+void rtl8821ae_set_fw_media_status_rpt_cmd(struct ieee80211_hw *hw,
+					   u8 mstatus);
+void rtl8821ae_set_fw_ap_off_load_cmd(struct ieee80211_hw *hw,
+				      u8 ap_offload_enable);
+void rtl8821ae_set_fw_rsvdpagepkt(struct ieee80211_hw *hw,
+				  bool b_dl_finished, bool dl_whole_packet);
+void rtl8812ae_set_fw_rsvdpagepkt(struct ieee80211_hw *hw,
+				  bool b_dl_finished, bool dl_whole_packet);
+void rtl8821ae_set_p2p_ps_offload_cmd(struct ieee80211_hw *hw,
+				      u8 p2p_ps_state);
+void rtl8821ae_set_fw_wowlan_mode(struct ieee80211_hw *hw, bool func_en);
+void rtl8821ae_set_fw_remote_wake_ctrl_cmd(struct ieee80211_hw *hw,
+					   u8 enable);
+void rtl8821ae_set_fw_keep_alive_cmd(struct ieee80211_hw *hw, bool func_en);
+void rtl8821ae_set_fw_disconnect_decision_ctrl_cmd(struct ieee80211_hw *hw,
+						   bool enabled);
+void rtl8821ae_set_fw_global_info_cmd(struct ieee80211_hw *hw);
+void rtl8812ae_c2h_packet_handler(struct ieee80211_hw *hw,
+				  u8 *buffer, u8 length);
 #endif

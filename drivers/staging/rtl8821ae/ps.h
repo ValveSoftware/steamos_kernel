@@ -40,8 +40,8 @@ bool rtl_ps_disable_nic(struct ieee80211_hw *hw);
 void rtl_ips_nic_off(struct ieee80211_hw *hw);
 void rtl_ips_nic_on(struct ieee80211_hw *hw);
 void rtl_ips_nic_off_wq_callback(void *data);
-void rtl_lps_enter(struct ieee80211_hw *hw);
-void rtl_lps_leave(struct ieee80211_hw *hw);
+extern void rtl_lps_enter(struct ieee80211_hw *hw);
+extern void rtl_lps_leave(struct ieee80211_hw *hw);
 
 void rtl_lps_set_psmode(struct ieee80211_hw *hw, u8 rt_psmode);
 

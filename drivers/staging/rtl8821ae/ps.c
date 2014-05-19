@@ -62,7 +62,7 @@ bool rtl_ps_enable_nic(struct ieee80211_hw *hw)
 
 	return init_status;
 }
-//EXPORT_SYMBOL(rtl_ps_enable_nic);
+EXPORT_SYMBOL(rtl_ps_enable_nic);
 
 bool rtl_ps_disable_nic(struct ieee80211_hw *hw)
 {
@@ -80,7 +80,7 @@ bool rtl_ps_disable_nic(struct ieee80211_hw *hw)
 
 	return status;
 }
-//EXPORT_SYMBOL(rtl_ps_disable_nic);
+EXPORT_SYMBOL(rtl_ps_disable_nic);
 
 bool rtl_ps_set_rf_state(struct ieee80211_hw *hw,
 			 enum rf_pwrstate state_toset,
@@ -181,7 +181,7 @@ no_protect:
 
 	return b_actionallowed;
 }
-//EXPORT_SYMBOL(rtl_ps_set_rf_state);
+EXPORT_SYMBOL(rtl_ps_set_rf_state);
 
 static void _rtl_ps_inactive_ps(struct ieee80211_hw *hw)
 {
@@ -200,10 +200,6 @@ static void _rtl_ps_inactive_ps(struct ieee80211_hw *hw)
 		}
 	}
 
-	if (rtlpriv->cfg->ops->get_btc_status()){
-		rtlpriv->btcoexist.btc_ops->btc_ips_notify(rtlpriv, 
-						ppsc->inactive_pwrstate);
-	}
 	rtl_ps_set_rf_state(hw, ppsc->inactive_pwrstate,
 			    RF_CHANGE_BY_IPS, false);
 
@@ -273,6 +269,11 @@ void rtl_ips_nic_off_wq_callback(void *data)
 			ppsc->inactive_pwrstate = ERFOFF;
 			ppsc->b_in_powersavemode = true;
 
+			/* call before RF off */
+			if (rtlpriv->cfg->ops->get_btc_status())
+				rtlpriv->btcoexist.btc_ops->btc_ips_notify(rtlpriv, 
+									ppsc->inactive_pwrstate);
+
 			/*rtl_pci_reset_trx_ring(hw); */
 			_rtl_ps_inactive_ps(hw);
 		}
@@ -313,6 +314,10 @@ void rtl_ips_nic_on(struct ieee80211_hw *hw)
 			ppsc->inactive_pwrstate = ERFON;
 			ppsc->b_in_powersavemode = false;
 			_rtl_ps_inactive_ps(hw);
+			/* call after RF on */
+			if (rtlpriv->cfg->ops->get_btc_status())
+				rtlpriv->btcoexist.btc_ops->btc_ips_notify(rtlpriv, 
+									ppsc->inactive_pwrstate);
 		}
 	}
 	spin_unlock(&rtlpriv->locks.ips_lock);
@@ -394,11 +399,15 @@ void rtl_lps_set_psmode(struct ieee80211_hw *hw, u8 rt_psmode)
 			if (ppsc->p2p_ps_info.opp_ps)
 				rtl_p2p_ps_cmd(hw,P2P_PS_ENABLE);
 
+			if (rtlpriv->cfg->ops->get_btc_status())
+				rtlpriv->btcoexist.btc_ops->btc_lps_notify(rtlpriv, rt_psmode);
 		} else {
 			if (rtl_get_fwlps_doze(hw)) {
 				RT_TRACE(COMP_RF, DBG_DMESG,
 					 ("FW LPS enter ps_mode:%x\n",
 					 ppsc->fwctrl_psmode));
+				if (rtlpriv->cfg->ops->get_btc_status())
+					rtlpriv->btcoexist.btc_ops->btc_lps_notify(rtlpriv, rt_psmode);
 				enter_fwlps = true;
 				ppsc->pwr_mode = ppsc->fwctrl_psmode;
 				ppsc->smart_ps = 2;
@@ -455,6 +464,7 @@ void rtl_lps_enter(struct ieee80211_hw *hw)
 	
 	spin_unlock_irqrestore(&rtlpriv->locks.lps_lock, flag);
 }
+EXPORT_SYMBOL(rtl_lps_enter);
 
 /*Leave the leisure power save mode.*/
 void rtl_lps_leave(struct ieee80211_hw *hw)
@@ -470,7 +480,7 @@ void rtl_lps_leave(struct ieee80211_hw *hw)
 		if (ppsc->dot11_psmode != EACTIVE) {
 
 			/*FIX ME */
-			rtlpriv->cfg->ops->enable_interrupt(hw);
+			/*rtlpriv->cfg->ops->enable_interrupt(hw); */
 
 			if (ppsc->reg_rfps_level & RT_RF_LPS_LEVEL_ASPM &&
 			    RT_IN_PS_LEVEL(ppsc, RT_PS_LEVEL_ASPM) &&
@@ -487,6 +497,7 @@ void rtl_lps_leave(struct ieee80211_hw *hw)
 	}
 	spin_unlock_irqrestore(&rtlpriv->locks.lps_lock, flag);
 }
+EXPORT_SYMBOL(rtl_lps_leave);
 
 /* For sw LPS*/
 void rtl_swlps_beacon(struct ieee80211_hw *hw, void *data, unsigned int len)

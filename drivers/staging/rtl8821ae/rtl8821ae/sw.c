@@ -96,10 +96,13 @@ int rtl8821ae_init_sw_vars(struct ieee80211_hw *hw)
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_pci *rtlpci = rtl_pcidev(rtl_pcipriv(hw));
 	const struct firmware *firmware;
+	const struct firmware *wowlan_firmware;
 	struct rtl_mac *mac = rtl_mac(rtl_priv(hw));
+	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
 	char *fw_name = NULL;
 
 	rtl8821ae_bt_reg_init(hw);
+	rtlpci->msi_support = false;
 	rtlpriv->btcoexist.btc_ops = rtl_btc_get_ops_pointer();
 
 	rtlpriv->dm.b_dm_initialgain_enable = 1;
@@ -109,6 +112,8 @@ int rtl8821ae_init_sw_vars(struct ieee80211_hw *hw)
 	rtlpci->transmit_config = CFENDFORM | BIT(15) | BIT(24) | BIT(25);
 	
 	mac->ht_enable = true;
+	mac->b_vht_ldpc_rx = false;
+	mac->b_vht_stbc_rx = false;
 
 	rtlpriv->rtlhal.current_bandtype = BAND_ON_2_4G;
 	/*following 2 is for register 5G band, refer to _rtl_init_mac80211()*/
@@ -154,6 +159,11 @@ int rtl8821ae_init_sw_vars(struct ieee80211_hw *hw)
 		 (u32)(	IMR_RXFOVW |
 		 		IMR_TXFOVW |
 				0);
+	/* for WOWLAN */
+	/* if kernel >= 3.11, revise this var,
+	 * remember revise 'rtl_wowlan_support' at the same time */
+	rtlpriv->psc.wo_wlan_mode = WAKE_ON_MAGIC_PACKET |
+				    WAKE_ON_PATTERN_MATCH;
 
 	/* for LPS & IPS */
 	rtlpriv->psc.b_inactiveps = rtlpriv->cfg->mod_params->b_inactiveps;
@@ -180,17 +190,20 @@ int rtl8821ae_init_sw_vars(struct ieee80211_hw *hw)
 		return 1;
 	}
 
-	fw_name = "rtlwifi/rtl8821aefw.bin";
+	
+	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
+		fw_name = "rtlwifi/rtl8812aefw.bin";
+	else
+		fw_name = "rtlwifi/rtl8821aefw.bin";
 	err = request_firmware(&firmware, fw_name, rtlpriv->io.dev);
 	if (err) {
 		RT_TRACE(COMP_ERR, DBG_EMERG,
-			 ("Failed to request firmware!\n"));
+			 ("Failed to request normal firmware!\n"));
 		return 1;
 	}
 
 	if (firmware->size > 0x8000) {
-		RT_TRACE(COMP_ERR, DBG_EMERG,
-			 ("Firmware is too big!\n"));
+		RT_TRACE(COMP_ERR, DBG_EMERG, ("Firmware is too big!\n"));
 		release_firmware(firmware);
 		return 1;
 	}
@@ -198,13 +211,41 @@ int rtl8821ae_init_sw_vars(struct ieee80211_hw *hw)
 	memcpy(rtlpriv->rtlhal.pfirmware, firmware->data, firmware->size);
 	rtlpriv->rtlhal.fwsize = firmware->size;
 	release_firmware(firmware);
-
-	if (rtlpriv->cfg->ops->get_btc_status()){
-		rtlpriv->btcoexist.btc_ops->btc_init_variables(rtlpriv);
-		rtlpriv->btcoexist.btc_ops->btc_init_hal_vars(rtlpriv);
+	
+#if (USE_SPECIFIC_FW_TO_SUPPORT_WOWLAN == 1)
+	/* for wowlan firmware buf */
+	rtlpriv->rtlhal.p_wowlan_firmware = (u8 *) vmalloc(0x8000);
+	if (!rtlpriv->rtlhal.p_wowlan_firmware) {
+		RT_TRACE(COMP_ERR, DBG_EMERG,
+			 ("Can't alloc buffer for wowlan fw.\n"));
+		return 1;
 	}
 
-	RT_TRACE(COMP_INIT, DBG_LOUD, (" FirmwareDownload OK\n"));
+	if (rtlpriv->rtlhal.hw_type == HARDWARE_TYPE_RTL8821AE)
+		fw_name = "rtlwifi/rtl8821aefw_wowlan.bin";
+	else
+		fw_name = "rtlwifi/rtl8812aefw_wowlan.bin";
+	err = request_firmware(&wowlan_firmware, fw_name, rtlpriv->io.dev);
+	if (err) {
+		RT_TRACE(COMP_ERR, DBG_EMERG,
+			 ("Failed to request wowlan firmware!\n"));
+		return 1;
+	}
+
+	if (wowlan_firmware->size > 0x8000) {
+		RT_TRACE(COMP_ERR, DBG_EMERG,
+			 ("Wowlan Firmware is too big!\n"));
+		release_firmware(wowlan_firmware);
+		return 1;
+	}
+
+	memcpy(rtlpriv->rtlhal.p_wowlan_firmware, wowlan_firmware->data,
+	       wowlan_firmware->size);
+	rtlpriv->rtlhal.wowlan_fwsize = wowlan_firmware->size;
+	release_firmware(wowlan_firmware);
+#endif
+
+	RT_TRACE(COMP_INIT, DBG_LOUD, ("FirmwareDownload OK\n"));
 	return err;
 }
 
@@ -212,17 +253,16 @@ void rtl8821ae_deinit_sw_vars(struct ieee80211_hw *hw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 
-	//printk("=========>rtl8821ae_deinit_sw_vars().\n");
-	if (rtlpriv->cfg->ops->get_btc_status()){
-		//printk("=========>rtl8821ae_deinit_sw_vars().get_btc_status\n");
-		rtlpriv->btcoexist.btc_ops->btc_halt_notify();
-	}
 	if (rtlpriv->rtlhal.pfirmware) {
-		//printk("=========>rtl8821ae_deinit_sw_vars().rtlpriv->rtlhal.pfirmware\n");
 		vfree(rtlpriv->rtlhal.pfirmware);
 		rtlpriv->rtlhal.pfirmware = NULL;
 	}
-	//printk("<=========rtl8821ae_deinit_sw_vars().\n");
+#if (USE_SPECIFIC_FW_TO_SUPPORT_WOWLAN == 1)
+	if (rtlpriv->rtlhal.p_wowlan_firmware) {
+		vfree(rtlpriv->rtlhal.p_wowlan_firmware);
+		rtlpriv->rtlhal.p_wowlan_firmware = NULL;
+	}
+#endif
 }
 
 u32 rtl8812ae_rx_command_packet_handler(
@@ -309,13 +349,14 @@ struct rtl_hal_ops rtl8821ae_hal_ops = {
 	.fill_h2c_cmd = rtl8821ae_fill_h2c_cmd,
 	.get_btc_status = rtl8821ae_get_btc_status,
 	.rx_command_packet_handler = rtl8812ae_rx_command_packet_handler,
+	.add_wowlan_pattern = rtl8821ae_add_wowlan_pattern,
 };
 
 struct rtl_mod_params rtl8821ae_mod_params = {
 	.sw_crypto = false,
-	.b_inactiveps = false,//true,
+	.b_inactiveps = true,//true,
 	.b_swctrl_lps = false,
-	.b_fwctrl_lps = false, //true,
+	.b_fwctrl_lps = true, //true,
 };
 
 struct rtl_hal_cfg rtl8821ae_hal_cfg = {
@@ -413,6 +454,14 @@ struct rtl_hal_cfg rtl8821ae_hal_cfg = {
 
 	.maps[RTL_RC_HT_RATEMCS7] =  DESC_RATEMCS7,
 	.maps[RTL_RC_HT_RATEMCS15] =  DESC_RATEMCS15,
+
+	/*VHT hightest rate*/
+	.maps[RTL_RC_VHT_RATE_1SS_MCS7] = DESC_RATEVHT1SS_MCS7,
+	.maps[RTL_RC_VHT_RATE_1SS_MCS8] = DESC_RATEVHT1SS_MCS8,
+	.maps[RTL_RC_VHT_RATE_1SS_MCS9] = DESC_RATEVHT1SS_MCS9,
+	.maps[RTL_RC_VHT_RATE_2SS_MCS7] = DESC_RATEVHT2SS_MCS7,
+	.maps[RTL_RC_VHT_RATE_2SS_MCS8] = DESC_RATEVHT2SS_MCS8,
+	.maps[RTL_RC_VHT_RATE_2SS_MCS9] = DESC_RATEVHT2SS_MCS9,
 };
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
@@ -469,14 +518,11 @@ static struct pci_driver rtl8821ae_driver = {
 
 };
 
-
 extern int rtl_core_module_init(void);
 extern void rtl_core_module_exit(void);
-
 static int __init rtl8821ae_module_init(void)
 {
 	int ret;
-
 	ret = rtl_core_module_init();
 	if (ret)
 		return ret;

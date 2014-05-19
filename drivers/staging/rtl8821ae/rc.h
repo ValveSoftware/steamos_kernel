@@ -38,6 +38,10 @@
 #define N_MODE_MCS7_RIX 7
 #define N_MODE_MCS15_RIX 15
 
+#define AC_MODE_MCS7_RIX 7
+#define AC_MODE_MCS8_RIX 8
+#define AC_MODE_MCS9_RIX 9
+
 struct rtl_rate_priv {
 	u8 ht_cap;
 };

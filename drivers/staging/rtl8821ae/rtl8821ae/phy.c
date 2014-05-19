@@ -39,6 +39,7 @@
 #include "trx.h"
 #include "../btcoexist/halbt_precomp.h"
 #include "hw.h"
+#include "../efuse.h"
 
 #define READ_NEXT_PAIR(array_table,v1, v2, i) do { i += 2; v1 = array_table[i]; v2 = array_table[i+1]; } while(0)
 
@@ -66,6 +67,11 @@ static long _rtl8821ae_phy_txpwr_idx_to_dbm(struct ieee80211_hw *hw,
 					 u8 txpwridx);
 static void rtl8821ae_phy_set_rf_on(struct ieee80211_hw *hw);
 static void rtl8821ae_phy_set_io(struct ieee80211_hw *hw);
+void _rtl8812ae_dm_read_and_config_txpwr_lmt(struct ieee80211_hw *hw);
+char _rtl8812ae_phy_get_channel_index_of_txpower_limit(struct ieee80211_hw *hw, 
+						     u8 band, u8 channel);
+
+
 
 void rtl8812ae_fixspur(
 	struct ieee80211_hw *hw,
@@ -415,6 +421,7 @@ bool rtl8821ae_phy_bb_config(struct ieee80211_hw *hw)
 	{
 		crystal_cap = rtlefuse->crystalcap & 0x3F;
 		rtl_set_bbreg(hw, REG_MAC_PHY_CTRL, 0x7FF80000, (crystal_cap | (crystal_cap << 6)));
+//		rtl_set_bbreg(hw, REG_MAC_PHY_CTRL, 0xffffffff, 0x430be200);
 	}else{
 		crystal_cap = rtlefuse->crystalcap & 0x3F;
 		rtl_set_bbreg(hw, REG_MAC_PHY_CTRL, 0xFFF000, (crystal_cap | (crystal_cap << 6)));
@@ -441,14 +448,15 @@ u32 phy_get_tx_bb_swing_8812A(
 	struct rtl_dm *rtldm = rtl_dm(rtlpriv);
 	struct rtl_efuse *rtlefuse = rtl_efuse(rtl_priv(hw));
 
-	char bb_swing_2g = (char) (-1 * 0xFF);
-	char bb_swing_5g = (char) (-1 * 0xFF);
+	char bb_swing_2g = (char) (-1 * 0xff);
+	char bb_swing_5g = (char) (-1 * 0xff);
 	u32  out = 0x200;
 	const char auto_temp = -1;
 
 	RT_TRACE(COMP_SCAN, DBG_LOUD, 
-		("===> PHY_GetTxBBSwing_8812A, bbSwing_2G: %d, bbSwing_5G: %d\n", 
-		(int)bb_swing_2g, (int)bb_swing_5g));
+		("===> PHY_GetTxBBSwing_8812A, bbSwing_2G: %d, bbSwing_5G: "
+		"%d,autoload_failflag=%d.\n", 
+		(int)bb_swing_2g, (int)bb_swing_5g, (int)rtlefuse->autoload_failflag));
 
     if ( rtlefuse->autoload_failflag) {
         	if ( band == BAND_ON_2_4G ) {
@@ -502,7 +510,7 @@ u32 phy_get_tx_bb_swing_8812A(
 		}
 		else
 		{
-			if (0xFF == auto_temp) 
+			if (-1 == auto_temp) 
 			{
 				efuse_shadow_read(hw, 1, 0xC7, (u32 *)&swing);
 				swing = (swing == 0xFF) ? 0x00 : swing;
@@ -589,14 +597,14 @@ void rtl8821ae_phy_switch_wirelessband(struct ieee80211_hw *hw, u8 band)
 	//u8 i, value8;
 	char bb_diff_between_band; 	
 
-	RT_TRACE(COMP_INIT, DBG_LOUD, ("\n"));
+//	RT_TRACE(COMP_INIT, DBG_LOUD, ("\n"));
 	txpath = rtl8821ae_phy_query_bb_reg(hw, RTXPATH, 0xf0);
 	rxpath = rtl8821ae_phy_query_bb_reg(hw, RCCK_RX, 0x0f000000);
 	rtlhal->current_bandtype = (enum band_type) band;
 	/* reconfig BB/RF according to wireless mode */
 	if (rtlhal->current_bandtype == BAND_ON_2_4G) {
 		/* BB & RF Config */
-		RT_TRACE(COMP_CMD, DBG_DMESG, ("2.4G\n"));
+//		RT_TRACE(COMP_CMD, DBG_DMESG, ("2.4G\n"));
 		rtl_set_bbreg(hw, ROFDMCCKEN, BOFDMEN|BCCKEN, 0x03);
 	
 		if (rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE) {
@@ -629,7 +637,7 @@ void rtl8821ae_phy_switch_wirelessband(struct ieee80211_hw *hw, u8 band)
 		rtl_write_byte(rtlpriv, REG_CCK_CHECK, 0x0);		
 	} else {/* 5G band */
 		u16 count, reg_41a;
-		RT_TRACE(COMP_CMD, DBG_DMESG, ("5G\n"));
+//		RT_TRACE(COMP_CMD, DBG_DMESG, ("5G\n"));
 
 		if(rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE) {
 			/*0xCB0[15:12] = 0x5 (LNA_On)*/
@@ -720,11 +728,18 @@ static bool _rtl8821ae_check_condition(struct ieee80211_hw *hw,
 	u32 _platform = 0x08;/*SupportPlatform */
 	u32 cond = Condition;
 
+	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE) {
+		_board = 0xa0;
+		_interface = 0x01;
+	}
+	
+
+
 	if ( Condition == 0xCDCDCDCD )
 		return true;
 
 	cond = Condition & 0xFF;
-	if ( (_board != cond) == 0 && cond != 0xFF)
+	if ( (_board != cond) && cond != 0xFF)
 		return false;
 
 	cond = Condition & 0xFF00;
@@ -747,7 +762,10 @@ static void _rtl8821ae_config_rf_reg(struct ieee80211_hw *hw,
 	)
 {
 	if ( addr == 0xfe || addr == 0xffe) {
-		mdelay(50);
+	/* In order not to disturb BT music when wifi init.(1ant NIC only) */
+	/*mdelay(50);*/
+		msleep(50);
+
 	} else {
 		rtl_set_rfreg(hw, rfpath, regaddr, RFREG_OFFSET_MASK, data);
 		udelay(1);
@@ -830,9 +848,9 @@ static void _rtl8821ae_phy_init_tx_power_by_rate(struct ieee80211_hw *hw)
 }
 
 void _rtl8821ae_phy_set_txpower_by_rate_base(struct ieee80211_hw *hw,
-														   u8 band, u8 path,
-														   u8 rate_section,
-														   u8 txnum, u8 value)
+					  u8 band, u8 path,
+					  u8 rate_section,
+					  u8 txnum, u8 value)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_phy *rtlphy = &(rtlpriv->phy);
@@ -1051,6 +1069,363 @@ void _phy_convert_txpower_dbm_to_relative_value(u32 *data, u8 start,
 	*data = temp_data;
 }
 
+void _rtl8812ae_phy_cross_reference_ht_and_vht_txpower_limit(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_phy *rtlphy = &(rtlpriv->phy);
+	u8 regulation, bw, channel, rate_section;	
+	char temp_pwrlmt = 0;
+	
+	for (regulation = 0; regulation < MAX_REGULATION_NUM; ++regulation) {
+		for (bw = 0; bw < MAX_5G_BANDWITH_NUM; ++bw){
+			for (channel = 0; channel < CHANNEL_MAX_NUMBER_5G; ++channel){
+				for (rate_section = 0; rate_section < MAX_RATE_SECTION_NUM; ++rate_section){	
+					temp_pwrlmt = rtlphy->txpwr_limit_5g[regulation]
+						[bw][rate_section][channel][RF90_PATH_A];
+					if (temp_pwrlmt == MAX_POWER_INDEX){
+						if ( bw == 0 || bw == 1 ) { /*5G 20M 40M VHT and HT can cross reference*/
+							RT_TRACE( COMP_INIT, DBG_TRACE, 
+								( "No power limit table of the specified band %d, "
+								"bandwidth %d, ratesection %d, channel %d, rf path %d\n",
+								1, bw, rate_section, channel, RF90_PATH_A));
+							if ( rate_section == 2 ) {
+								rtlphy->txpwr_limit_5g[regulation][bw][2][channel][RF90_PATH_A] = 
+									rtlphy->txpwr_limit_5g[regulation][bw][4][channel][RF90_PATH_A];
+							} else if ( rate_section == 4 ) {
+								rtlphy->txpwr_limit_5g[regulation][bw][4][channel][RF90_PATH_A] = 
+									rtlphy->txpwr_limit_5g[regulation][bw][2][channel][RF90_PATH_A];
+							} else if ( rate_section == 3 ) {
+								rtlphy->txpwr_limit_5g[regulation][bw][3][channel][RF90_PATH_A] = 
+									rtlphy->txpwr_limit_5g[regulation][bw][5][channel][RF90_PATH_A];
+							} else if ( rate_section == 5 ) {
+								rtlphy->txpwr_limit_5g[regulation][bw][5][channel][RF90_PATH_A] = 
+									rtlphy->txpwr_limit_5g[regulation][bw][3][channel][RF90_PATH_A];
+							}
+
+							RT_TRACE( COMP_INIT, DBG_TRACE, ( "use other value %d", temp_pwrlmt));
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+u8 _rtl8812ae_phy_get_txpower_by_rate_base_index(struct ieee80211_hw *hw, 
+					           enum band_type band, u8 rate)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	u8 index = 0;
+	if (band == BAND_ON_2_4G) {
+		switch (rate)
+		{
+			case MGN_1M: 
+			case MGN_2M: 
+			case MGN_5_5M: 
+			case MGN_11M:
+				index = 0;
+				break;
+
+			case MGN_6M: 
+			case MGN_9M: 
+			case MGN_12M: 
+			case MGN_18M:
+			case MGN_24M: 
+			case MGN_36M: 
+			case MGN_48M: 
+			case MGN_54M:
+				index = 1;
+				break;
+
+			case MGN_MCS0: 
+			case MGN_MCS1: 
+			case MGN_MCS2: 
+			case MGN_MCS3: 
+			case MGN_MCS4: 
+			case MGN_MCS5: 
+			case MGN_MCS6: 
+			case MGN_MCS7:
+				index = 2;
+				break;
+				
+			case MGN_MCS8: 
+			case MGN_MCS9: 
+			case MGN_MCS10: 
+			case MGN_MCS11: 
+			case MGN_MCS12: 
+			case MGN_MCS13: 
+			case MGN_MCS14: 
+			case MGN_MCS15:
+				index = 3;
+				break;
+
+			default:
+				RT_TRACE( COMP_INIT, DBG_LOUD, 
+					( "Wrong rate 0x%x to obtain index in 2.4G"
+					" in PHY_GetTxPowerByRateBaseIndex()\n",
+					rate));
+				break;
+		}
+	} else if (band == BAND_ON_5G ) {
+		switch (rate)
+		{
+			case MGN_6M: 
+			case MGN_9M: 
+			case MGN_12M: 
+			case MGN_18M:
+			case MGN_24M: 
+			case MGN_36M: 
+			case MGN_48M: 
+			case MGN_54M:
+				index = 0;
+				break;
+
+			case MGN_MCS0: 
+			case MGN_MCS1: 
+			case MGN_MCS2: 
+			case MGN_MCS3: 
+			case MGN_MCS4: 
+			case MGN_MCS5: 
+			case MGN_MCS6: 
+			case MGN_MCS7:
+				index = 1;
+				break;
+				
+			case MGN_MCS8: 
+			case MGN_MCS9: 
+			case MGN_MCS10: 
+			case MGN_MCS11: 
+			case MGN_MCS12: 
+			case MGN_MCS13: 
+			case MGN_MCS14: 
+			case MGN_MCS15:
+				index = 2;
+				break;
+
+			case MGN_VHT1SS_MCS0: 
+			case MGN_VHT1SS_MCS1: 
+			case MGN_VHT1SS_MCS2:
+			case MGN_VHT1SS_MCS3: 
+			case MGN_VHT1SS_MCS4: 
+			case MGN_VHT1SS_MCS5:
+			case MGN_VHT1SS_MCS6: 
+			case MGN_VHT1SS_MCS7: 
+			case MGN_VHT1SS_MCS8:
+			case MGN_VHT1SS_MCS9:
+				index = 3;
+				break;
+				
+			case MGN_VHT2SS_MCS0: 
+			case MGN_VHT2SS_MCS1: 
+			case MGN_VHT2SS_MCS2:
+			case MGN_VHT2SS_MCS3: 
+			case MGN_VHT2SS_MCS4: 
+			case MGN_VHT2SS_MCS5:
+			case MGN_VHT2SS_MCS6: 
+			case MGN_VHT2SS_MCS7: 
+			case MGN_VHT2SS_MCS8:
+			case MGN_VHT2SS_MCS9:
+				index = 4;
+				break;
+
+			default:
+				RT_TRACE( COMP_INIT, DBG_LOUD, 
+					("Wrong rate 0x%x to obtain index in 5G in"
+					" PHY_GetTxPowerByRateBaseIndex()\n", 
+					rate ) );
+				break;
+		}
+	}
+
+	return index;
+}
+
+
+
+void _rtl8812ae_phy_convert_txpower_limit_to_power_index(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_phy *rtlphy = &(rtlpriv->phy);
+	u8 bw40_pwr_base_dbm2_4G, bw40_pwr_base_dbm5G;
+	u8 regulation, bw, channel, rate_section;	
+	u8 base_index2_4G = 0;
+	u8 base_index5G = 0;
+	char temp_value = 0, temp_pwrlmt = 0;
+	u8 rf_path = 0;
+
+	RT_TRACE(COMP_INIT, DBG_TRACE, 
+		("=====> _rtl8812ae_phy_convert_txpower_limit_to_power_index()\n"));
+
+	_rtl8812ae_phy_cross_reference_ht_and_vht_txpower_limit(hw);
+	
+	for (regulation = 0; regulation < MAX_REGULATION_NUM; ++regulation) {
+		for ( bw = 0; bw < MAX_2_4G_BANDWITH_NUM; ++bw ) {
+			for ( channel = 0; channel < CHANNEL_MAX_NUMBER_2G; ++channel ) {						
+				for ( rate_section = 0; rate_section < MAX_RATE_SECTION_NUM; ++rate_section ) {	
+					/* obtain the base dBm values in 2.4G band
+					 CCK => 11M, OFDM => 54M, HT 1T => MCS7, HT 2T => MCS15*/
+					if ( rate_section == 0 ) { /*CCK*/
+						base_index2_4G = 
+							_rtl8812ae_phy_get_txpower_by_rate_base_index(hw, 
+							BAND_ON_2_4G, MGN_11M );
+					} else if ( rate_section == 1 ) { /*OFDM*/
+						base_index2_4G = 
+							_rtl8812ae_phy_get_txpower_by_rate_base_index(hw, 
+							BAND_ON_2_4G, MGN_54M);
+					} else if ( rate_section == 2 ) { /*HT IT*/
+						base_index2_4G = 
+							_rtl8812ae_phy_get_txpower_by_rate_base_index(hw, 
+							BAND_ON_2_4G,MGN_MCS7);
+					} else if ( rate_section == 3 ) { /*HT 2T*/
+						base_index2_4G = 
+							_rtl8812ae_phy_get_txpower_by_rate_base_index(hw, 
+							BAND_ON_2_4G, MGN_MCS15);
+					}
+
+					temp_pwrlmt = rtlphy->txpwr_limit_2_4g[regulation]
+						[bw][rate_section][channel][RF90_PATH_A];
+
+					for (rf_path = RF90_PATH_A; 
+						rf_path < MAX_RF_PATH_NUM; 
+						++rf_path){
+						if ( rate_section == 3 )
+							bw40_pwr_base_dbm2_4G =
+							rtlphy->txpwr_by_rate_base_24g[rf_path][RF_2TX][base_index2_4G];
+						else
+							bw40_pwr_base_dbm2_4G =
+							rtlphy->txpwr_by_rate_base_24g[rf_path][RF_1TX][base_index2_4G];
+
+						if (temp_pwrlmt != MAX_POWER_INDEX) {
+							temp_value = temp_pwrlmt - bw40_pwr_base_dbm2_4G;
+							rtlphy->txpwr_limit_2_4g[regulation]
+								[bw][rate_section][channel][rf_path] = 
+								temp_value;
+						}
+						
+						RT_TRACE(COMP_INIT, DBG_TRACE, 
+							("TxPwrLimit_2_4G[regulation %d][bw %d]"
+							"[rateSection %d][channel %d] = %d \n"
+							"(TxPwrLimit in dBm %d - BW40PwrLmt2_4G"
+							"[channel %d][rfPath %d] %d) \n",
+							regulation, bw, rate_section, channel, 
+							rtlphy->txpwr_limit_2_4g[regulation][bw]
+							[rate_section][channel][rf_path], (temp_pwrlmt==63) 
+							? 0 : temp_pwrlmt/2, channel, rf_path, 
+							bw40_pwr_base_dbm2_4G));
+					}
+				}
+			}
+		}
+	}
+	for ( regulation = 0; regulation < MAX_REGULATION_NUM; ++regulation )
+	{
+		for ( bw = 0; bw < MAX_5G_BANDWITH_NUM; ++bw )
+		{
+			for ( channel = 0; channel < CHANNEL_MAX_NUMBER_5G; ++channel )
+			{
+				for ( rate_section = 0; rate_section < MAX_RATE_SECTION_NUM; ++rate_section )
+				{	
+					/* obtain the base dBm values in 5G band
+					 OFDM => 54M, HT 1T => MCS7, HT 2T => MCS15, 
+					VHT => 1SSMCS7, VHT 2T => 2SSMCS7*/
+					if ( rate_section == 1 ) { /*OFDM*/
+						base_index5G = 
+							_rtl8812ae_phy_get_txpower_by_rate_base_index(hw, 
+							BAND_ON_5G, MGN_54M );
+					} else if ( rate_section == 2 ) { /*HT 1T*/
+						base_index5G = 
+							_rtl8812ae_phy_get_txpower_by_rate_base_index(hw, 
+							BAND_ON_5G, MGN_MCS7 );
+					} else if ( rate_section == 3 ) { /*HT 2T*/
+						base_index5G = 
+							_rtl8812ae_phy_get_txpower_by_rate_base_index(hw, 
+							BAND_ON_5G, MGN_MCS15 );
+					} else if ( rate_section == 4 ) { /*VHT 1T*/
+						base_index5G = 
+							_rtl8812ae_phy_get_txpower_by_rate_base_index(hw, 
+							BAND_ON_5G, MGN_VHT1SS_MCS7 );
+					} else if ( rate_section == 5 ) { /*VHT 2T*/
+						base_index5G = 
+							_rtl8812ae_phy_get_txpower_by_rate_base_index(hw, 
+							BAND_ON_5G, MGN_VHT2SS_MCS7 );
+					}
+
+					temp_pwrlmt = rtlphy->txpwr_limit_5g[regulation]
+						[bw][rate_section][channel]
+						[RF90_PATH_A];
+
+					for ( rf_path = RF90_PATH_A; 
+					rf_path < MAX_RF_PATH_NUM; 
+					++rf_path ) {
+						if ( rate_section == 3 || rate_section == 5 )
+							bw40_pwr_base_dbm5G = 
+							rtlphy->txpwr_by_rate_base_5g[rf_path]
+							[RF_2TX][base_index5G];
+						else
+							bw40_pwr_base_dbm5G = 
+							rtlphy->txpwr_by_rate_base_5g[rf_path]
+							[RF_1TX][base_index5G];
+
+						if ( temp_pwrlmt != MAX_POWER_INDEX ) {
+							temp_value = 
+								temp_pwrlmt - bw40_pwr_base_dbm5G;
+							rtlphy->txpwr_limit_5g[regulation]
+								[bw][rate_section][channel]
+								[rf_path] = temp_value;
+						}
+						
+						RT_TRACE(COMP_INIT, DBG_TRACE, 
+							("TxPwrLimit_5G[regulation %d]"
+							"[bw %d][rateSection %d]"
+							"[channel %d] =%d\n"
+							"(TxPwrLimit in dBm %d - "
+							"BW40PwrLmt5G[chnl group %d]"
+							"[rfPath %d] %d) \n",
+							regulation, bw, rate_section, 
+							channel, rtlphy->txpwr_limit_5g[regulation]
+							[bw][rate_section][channel][rf_path], 
+							temp_pwrlmt, channel, rf_path, bw40_pwr_base_dbm5G));
+					}
+				}
+			}
+		}
+	}
+	RT_TRACE(COMP_INIT, DBG_TRACE,  
+		( "<===== _rtl8812ae_phy_convert_txpower_"
+		"limit_to_power_index()\n"));
+}
+
+
+void _rtl8821ae_phy_init_txpower_limit(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_phy *rtlphy = &(rtlpriv->phy);
+	u8 i, j, k, l, m;
+
+	RT_TRACE( COMP_INIT, DBG_LOUD, 
+		( "=====> _rtl8821ae_phy_init_txpower_limit()!\n" ) );
+	
+	for ( i = 0; i < MAX_REGULATION_NUM; ++i ) {
+		for ( j = 0; j < MAX_2_4G_BANDWITH_NUM; ++j )
+			for ( k = 0; k < MAX_RATE_SECTION_NUM; ++k )
+				for ( m = 0; m < CHANNEL_MAX_NUMBER_2G; ++m )
+					for ( l = 0; l < MAX_RF_PATH_NUM; ++l )
+						rtlphy->txpwr_limit_2_4g[i][j][k][m][l] 
+						= MAX_POWER_INDEX;
+	} 
+	for ( i = 0; i < MAX_REGULATION_NUM; ++i ) {
+		for ( j = 0; j < MAX_5G_BANDWITH_NUM; ++j )
+			for ( k = 0; k < MAX_RATE_SECTION_NUM; ++k )
+				for ( m = 0; m < CHANNEL_MAX_NUMBER_5G; ++m )
+					for ( l = 0; l < MAX_RF_PATH_NUM; ++l )
+						rtlphy->txpwr_limit_5g[i][j][k][m][l] 
+						= MAX_POWER_INDEX;
+    	}
+	
+	RT_TRACE( COMP_INIT, DBG_LOUD, 
+		( "<===== _rtl8821ae_phy_init_txpower_limit()!\n" ) );
+}
+
 void _rtl8821ae_phy_convert_txpower_dbm_to_relative_value(struct ieee80211_hw *hw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
@@ -1191,6 +1566,11 @@ static bool _rtl8821ae_phy_bb8821a_config_parafile(struct ieee80211_hw *hw)
 	/*TX POWER LIMIT
 	    PHY_InitTxPowerLimit
 	    PHY_ConfigRFWithCustomPowerLimitTableParaFile*/
+	_rtl8821ae_phy_init_txpower_limit(hw);
+	
+	//if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
+		_rtl8812ae_dm_read_and_config_txpwr_lmt(hw);
+	
 	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
 		rtstatus = _rtl8812ae_phy_config_bb_with_headerfile(hw,
 								BASEBAND_CONFIG_PHY_REG);
@@ -1219,6 +1599,9 @@ static bool _rtl8821ae_phy_bb8821a_config_parafile(struct ieee80211_hw *hw)
 	}
 	
 	_rtl8821ae_phy_txpower_by_rate_configuration(hw);
+
+	//if (rtlefuse->eeprom_regulatory == 1)
+		_rtl8812ae_phy_convert_txpower_limit_to_power_index(hw);
 	
 	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE)
 		rtstatus = _rtl8812ae_phy_config_bb_with_headerfile(hw,
@@ -1232,8 +1615,7 @@ static bool _rtl8821ae_phy_bb8821a_config_parafile(struct ieee80211_hw *hw)
 		return false;
 	}
 	rtlphy->bcck_high_power = (bool) (rtl_get_bbreg(hw,
-							RFPGA0_XA_HSSIPARAMETER2,
-							0x200));
+			RFPGA0_XA_HSSIPARAMETER2,0x200));
 	return true;
 }
 
@@ -1504,6 +1886,179 @@ static bool _rtl8821ae_phy_config_bb_with_headerfile(struct ieee80211_hw *hw,
 	return true;
 }
 
+bool _rtl8812ae_get_u8_integer_from_string_in_decimal(char *str,u8 *pint)
+{
+	u16 i = 0;
+	*pint = 0;
+
+	while ( str[i] != '\0' ) {
+		if ( str[i] >= '0' && str[i] <= '9' ) {
+			*pint *= 10;
+			*pint += ( str[i] - '0' );
+		} else {
+			return false;
+		}
+		++i;
+	}
+
+	return true;
+}
+
+bool _rtl8812ae_eq_n_byte(u8 *str1, u8 *str2, u32 num)
+{
+	if (num==0)
+		return false;
+	while (num>0) {
+		num--;
+		if(str1[num]!=str2[num])
+			return false;
+	}
+	return true;
+}
+
+void _rtl8812ae_phy_set_txpower_limit(struct ieee80211_hw *hw, u8 *pregulation,
+	   			    u8 *pband, u8 *pbandwidth, u8 *prate_section,
+				    u8 *prf_path, u8 *pchannel, u8 *ppower_limit)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_phy *rtlphy = &(rtlpriv->phy);
+	u8 regulation=0, bandwidth=0, rate_section=0, channel;
+	u8 channel_index;
+	char power_limit = 0, prev_power_limit, ret;
+
+	if ( !_rtl8812ae_get_u8_integer_from_string_in_decimal((char *)pchannel, &channel ) ||
+		 !_rtl8812ae_get_u8_integer_from_string_in_decimal((char *)ppower_limit, &power_limit 
+		 )) {
+		RT_TRACE(COMP_INIT, DBG_TRACE, 
+			 ("Illegal index of power limit table [chnl %d][val %d]\n", 
+			  channel, power_limit ) );
+	}
+
+	power_limit = power_limit > MAX_POWER_INDEX ? 
+		MAX_POWER_INDEX : power_limit;
+
+	if ( _rtl8812ae_eq_n_byte(pregulation, (u8 *)("FCC"), 3 )) 
+		regulation = 0;
+	else if ( _rtl8812ae_eq_n_byte( pregulation, (u8 *)("MKK"), 3 )) 
+		regulation = 1;
+	else if ( _rtl8812ae_eq_n_byte( pregulation, (u8 *)("ETSI"), 4 )) 
+		regulation = 2;
+	else if ( _rtl8812ae_eq_n_byte( pregulation, (u8 *)("WW13"), 4 )) 
+		regulation = 3;
+
+	if ( _rtl8812ae_eq_n_byte( prate_section, (u8 *)("CCK"), 3 ))
+		rate_section = 0;
+	else if ( _rtl8812ae_eq_n_byte( prate_section, (u8 *)("OFDM"), 4 ))
+		rate_section = 1;
+	else if ( _rtl8812ae_eq_n_byte( prate_section, (u8 *)("HT"), 2 ) 
+		&& _rtl8812ae_eq_n_byte( prf_path, (u8 *)("1T"), 2 ))
+		rate_section = 2;
+	else if ( _rtl8812ae_eq_n_byte( prate_section, (u8 *)("HT"), 2 ) 
+		&& _rtl8812ae_eq_n_byte( prf_path, (u8 *)("2T"), 2 ))
+		rate_section = 3;
+	else if ( _rtl8812ae_eq_n_byte( prate_section, (u8 *)("VHT"), 3 ) 
+		&& _rtl8812ae_eq_n_byte( prf_path, (u8 *)("1T"), 2 ))
+		rate_section = 4;
+	else if ( _rtl8812ae_eq_n_byte( prate_section, (u8 *)("VHT"), 3 ) 
+		&& _rtl8812ae_eq_n_byte( prf_path, (u8 *)("2T"), 2 ))
+		rate_section = 5;
+			
+
+	if (_rtl8812ae_eq_n_byte(pbandwidth, (u8 *)("20M"), 3 ) ) bandwidth = 0;
+	else if (_rtl8812ae_eq_n_byte(pbandwidth, (u8 *)("40M"), 3 ) ) bandwidth = 1;
+	else if (_rtl8812ae_eq_n_byte(pbandwidth, (u8 *)("80M"), 3 ) ) bandwidth = 2;
+	else if (_rtl8812ae_eq_n_byte(pbandwidth, (u8 *)("160M"), 4 ) ) bandwidth = 3;
+
+	if (_rtl8812ae_eq_n_byte(pband, (u8 *)("2.4G"), 4 )) {
+		ret = _rtl8812ae_phy_get_channel_index_of_txpower_limit(hw, 
+			BAND_ON_2_4G, channel);
+	
+		if (ret == -1)
+			return;
+
+		channel_index = ret;		
+
+		prev_power_limit = rtlphy->txpwr_limit_2_4g[regulation]
+			[bandwidth][rate_section][channel_index][RF90_PATH_A];
+
+		if (power_limit < prev_power_limit)
+			rtlphy->txpwr_limit_2_4g[regulation][bandwidth]
+				[rate_section][channel_index][RF90_PATH_A] = 
+								   power_limit;
+
+		RT_TRACE(COMP_INIT, DBG_TRACE, ( "2.4G Band value : "
+			"[regulation %d][bw %d][rate_section %d][chnl %d]"
+			"[val %d]\n", regulation, bandwidth, rate_section, 
+			channel_index, rtlphy->txpwr_limit_2_4g[regulation]
+			[bandwidth][rate_section][channel_index][RF90_PATH_A]));
+	} else if ( _rtl8812ae_eq_n_byte( pband, (u8 *)("5G"), 2 )){
+		ret = _rtl8812ae_phy_get_channel_index_of_txpower_limit(hw,
+			BAND_ON_5G,channel );
+
+		if (ret == -1)
+			return;
+		
+		channel_index = ret;
+		
+		prev_power_limit = rtlphy->txpwr_limit_5g[regulation][bandwidth]
+			[rate_section][channel_index][RF90_PATH_A];
+
+		if (power_limit < prev_power_limit)
+			rtlphy->txpwr_limit_5g[regulation][bandwidth]
+			[rate_section][channel_index][RF90_PATH_A] = power_limit;
+
+		RT_TRACE(COMP_INIT, DBG_TRACE, ( "5G Band value : "
+			"[regulation %d][bw %d][rate_section %d][chnl %d]"
+			"[val %d]\n", regulation, bandwidth, rate_section, channel, 
+			rtlphy->txpwr_limit_5g[regulation][bandwidth]
+			[rate_section][channel_index][RF90_PATH_A]));
+		
+	}
+	else
+	{
+		RT_TRACE(COMP_INIT, DBG_TRACE, 
+			( "Cannot recognize the band info in %s\n", pband));
+		return;
+	}
+}
+
+
+void _rtl8812ae_dm_config_bb_txtxpwr_lmt(struct ieee80211_hw *hw, u8 *regulation,
+				            u8 *band, u8 *bandwidth, u8 *rate_section,
+				            u8 *rf_path, u8 *channel, u8 *power_limit)
+{   
+	_rtl8812ae_phy_set_txpower_limit(hw, regulation, band,
+		bandwidth, rate_section, rf_path, channel, power_limit);
+}
+
+
+void _rtl8812ae_dm_read_and_config_txpwr_lmt(struct ieee80211_hw *hw)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	u32 i = 0;
+	u32 array_len = RTL8812AE_TXPWR_LMT_ARRAY_LEN;
+	u8 **array = RTL8812AE_TXPWR_LMT;
+
+
+	RT_TRACE(COMP_INIT, DBG_TRACE,("===>_rtl8812ae_dm_read_"
+		"and_config_txpwr_lmt\n"));
+
+	for (i = 0; i < array_len; i += 7 ) {
+		u8 *regulation = array[i];
+		u8 *band = array[i+1];
+		u8 *bandwidth = array[i+2];
+		u8 *rate = array[i+3];
+		u8 *rf_path = array[i+4];
+		u8 *chnl = array[i+5];
+		u8 *val = array[i+6];
+
+		_rtl8812ae_dm_config_bb_txtxpwr_lmt(hw, regulation, band, 
+			bandwidth, rate, rf_path, chnl, val);
+	}
+
+}
+
+
 static u8 _rtl8821ae_get_rate_selection_index(u32 regaddr)
 {
 	u8 index = 0;
@@ -1522,9 +2077,9 @@ static u8 _rtl8821ae_get_rate_selection_index(u32 regaddr)
 }
 
 static void _rtl8821ae_store_tx_power_by_rate(struct ieee80211_hw *hw,
-						   								 u32 band, u32 rfpath,
-						   								 u32 txnum, u32 regaddr,
-						   								 u32 bitmask, u32 data)
+	   				      u32 band, u32 rfpath,
+					      u32 txnum, u32 regaddr,
+					      u32 bitmask, u32 data)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_phy *rtlphy = &(rtlpriv->phy);
@@ -1540,7 +2095,7 @@ static void _rtl8821ae_store_tx_power_by_rate(struct ieee80211_hw *hw,
 		RT_TRACE(COMP_INIT, DBG_WARNING, ("Invalid TxNum %d\n", txnum ) ); 
 
 	rtlphy->tx_power_by_rate_offset[band][rfpath][txnum][rate_section] = data;
-	RT_TRACE(COMP_INIT, DBG_WARNING,( "pHalData->TxPwrByRateOffset[Band %d][RfPath %d][TxNum %d][RateSection %d] = 0x%x\n", 
+	RT_TRACE(COMP_INIT, DBG_LOUD, ("TxPwrByRateOffset[Band %d][RfPath %d][TxNum %d][RateSection %d] = 0x%x\n", 
 			band, rfpath, txnum, rate_section, rtlphy->tx_power_by_rate_offset[band][rfpath][txnum][rate_section]));
 
 }
@@ -1691,8 +2246,9 @@ bool rtl8812ae_phy_config_rf_with_headerfile(struct ieee80211_hw * hw,
 					READ_NEXT_RF_PAIR_8812(radioa_array_table_a,v1, v2, i);
 					while (v2 != 0xDEAD &&
 					       v2 != 0xCDEF &&
-					       v2 != 0xCDCD && i < radioa_arraylen_a-2)
+					       v2 != 0xCDCD && i < radioa_arraylen_a-2) {
 					    READ_NEXT_RF_PAIR_8812(radioa_array_table_a,v1, v2, i);
+						}
 
 					i -= 2; /* prevent from for-loop += 2*/
 				} else {/*Configure matched pairs and skip to end of if-else.*/
@@ -1704,8 +2260,9 @@ bool rtl8812ae_phy_config_rf_with_headerfile(struct ieee80211_hw * hw,
 						READ_NEXT_RF_PAIR_8812(radioa_array_table_a,v1, v2, i);
 					}
 
-					while (v2 != 0xDEAD && i < radioa_arraylen_a-2)
+					while (v2 != 0xDEAD && i < radioa_arraylen_a-2){
 						READ_NEXT_RF_PAIR_8812(radioa_array_table_a,v1, v2, i);
+						}
 				}
 			}
 		}
@@ -1912,9 +2469,11 @@ void rtl8821ae_phy_get_txpower_level(struct ieee80211_hw *hw, long *powerlevel)
 static bool _rtl8821ae_phy_get_chnl_index(u8 channel, u8 *chnl_index)
 {
 	u8 channel_5g[CHANNEL_MAX_NUMBER_5G] = 
-				 {36,38,40,42,44,46,48,50,52,54,56,58,60,62,64,100,102,104,106,108,110,112,
-				114,116,118,120,122,124,126,128,130,132,134,136,138,140,142,144,149,151,
-				153,155,157,159,161,163,165,167,168,169,171,173,175,177};
+			{36,38,40,42,44,46,48,50,52,54,56,58,60,62,
+			64,100,102,104,106,108,110,112,114,116,118,
+			120,122,124,126,128,130,132,134,136,138,140,
+			142,144,149,151,153,155,157,159,161,163,165,
+			167,168,169,171,173,175,177};
 	u8 i = 0;
 	bool in_24g = true;
 
@@ -1924,7 +2483,7 @@ static bool _rtl8821ae_phy_get_chnl_index(u8 channel, u8 *chnl_index)
 	} else {
 		in_24g = false;
 
-		for (i = 0; i < sizeof(channel_5g) / sizeof(u8); ++i) {
+		for (i = 0; i < CHANNEL_MAX_NUMBER_5G; ++i) {
 			if (channel_5g[i] == channel) {
 				*chnl_index = i;
 				return in_24g;
@@ -2030,13 +2589,240 @@ static char _rtl8821ae_phy_get_ratesection_intxpower_byrate(u8 path, u8 rate)
 	return rate_section;	
 }
 
+char _rtl8812ae_phy_get_channel_index_of_txpower_limit(struct ieee80211_hw *hw, 
+						     u8 band, u8 channel)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	char channel_index = -1;
+	u8 channel_5g[CHANNEL_MAX_NUMBER_5G] = 
+		{36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 64, 
+		100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 
+		124, 126, 128, 130, 132, 134, 136, 138, 140, 142, 144, 149, 
+		151, 153, 155, 157, 159, 161, 163, 165, 167, 168, 169, 171, 
+		173, 175, 177};
+	u8  i = 0;
+	if ( band == BAND_ON_2_4G ) {
+		channel_index = channel - 1;
+	} else if ( band == BAND_ON_5G ) {
+		for ( i = 0; i < sizeof(channel_5g)/sizeof(channel_5g); ++i )
+		{
+			if ( channel_5g[i] == channel )
+				channel_index = i;
+		}
+	}
+	else
+		RT_TRACE( COMP_POWER, DBG_LOUD, ( "Invalid Band %d in %s", 
+		band, __FUNCTION__ ) );
+
+	if ( channel_index == -1 )
+		RT_TRACE( COMP_POWER, DBG_LOUD, 
+		( "Invalid Channel %d of Band %d in %s", channel, 
+		band, __FUNCTION__ ) );
+
+	return channel_index;
+}
+
+char _rtl8812ae_phy_get_world_wide_limit(char  *limit_table)
+{
+	char min = limit_table[0];
+	u8 i = 0;
+	
+	for (i = 0; i < MAX_REGULATION_NUM; ++i) {
+		if (limit_table[i] < min)
+			min = limit_table[i];
+	}
+	return min;
+}
+
+
+char _rtl8812ae_phy_get_txpower_limit(struct ieee80211_hw *hw,
+				     u8 band, enum ht_channel_width bandwidth,
+				     enum radio_path rf_path,
+				     u8 rate, u8 channel)
+{
+	struct rtl_priv *rtlpriv = rtl_priv(hw);
+	struct rtl_efuse *rtlefuse = rtl_efuse(rtlpriv);
+	struct rtl_phy *rtlphy = &(rtlpriv->phy);
+	short band_temp = -1, regulation = -1, bandwidth_temp = -1,
+	         rate_section = -1, channel_temp = -1;
+	u16 bd, regu, bdwidth, sec, chnl;
+	char power_limit = MAX_POWER_INDEX;
+
+	if (rtlefuse->eeprom_regulatory == 0 ||
+		  rtlefuse->eeprom_regulatory == 2 )
+		return MAX_POWER_INDEX;
+
+	regulation = TXPWR_LMT_WW;
+
+	
+	if ( band == BAND_ON_2_4G ) band_temp = 0; 
+	else if ( band == BAND_ON_5G ) band_temp = 1; 
+
+	if ( bandwidth == HT_CHANNEL_WIDTH_20 ) bandwidth_temp = 0;
+	else if ( bandwidth == HT_CHANNEL_WIDTH_20_40 ) bandwidth_temp = 1;
+	else if ( bandwidth == HT_CHANNEL_WIDTH_80 ) bandwidth_temp = 2;
+	
+	switch (rate)
+	{
+		case DESC_RATE1M: 
+		case DESC_RATE2M: 
+		case DESC_RATE5_5M: 
+		case DESC_RATE11M:
+			rate_section = 0;
+			break;
+
+		case DESC_RATE6M: 
+		case DESC_RATE9M: 
+		case DESC_RATE12M: 
+		case DESC_RATE18M:
+		case DESC_RATE24M: 
+		case DESC_RATE36M: 
+		case DESC_RATE48M:
+		case DESC_RATE54M:
+			rate_section = 1;
+			break;
+
+		case DESC_RATEMCS0: 
+		case DESC_RATEMCS1: 
+		case DESC_RATEMCS2: 
+		case DESC_RATEMCS3: 
+		case DESC_RATEMCS4: 
+		case DESC_RATEMCS5: 
+		case DESC_RATEMCS6: 
+		case DESC_RATEMCS7:
+			rate_section = 2;
+			break;
+			
+		case DESC_RATEMCS8: 
+		case DESC_RATEMCS9: 
+		case DESC_RATEMCS10: 
+		case DESC_RATEMCS11: 
+		case DESC_RATEMCS12: 
+		case DESC_RATEMCS13: 
+		case DESC_RATEMCS14: 
+		case DESC_RATEMCS15:
+			rate_section = 3;
+			break;
+
+		case DESC_RATEVHT1SS_MCS0: 
+		case DESC_RATEVHT1SS_MCS1: 
+		case DESC_RATEVHT1SS_MCS2:
+		case DESC_RATEVHT1SS_MCS3: 
+		case DESC_RATEVHT1SS_MCS4: 
+		case DESC_RATEVHT1SS_MCS5:
+		case DESC_RATEVHT1SS_MCS6: 
+		case DESC_RATEVHT1SS_MCS7: 
+		case DESC_RATEVHT1SS_MCS8:
+		case DESC_RATEVHT1SS_MCS9:
+			rate_section = 4;
+			break;
+			
+		case DESC_RATEVHT2SS_MCS0: 
+		case DESC_RATEVHT2SS_MCS1: 
+		case DESC_RATEVHT2SS_MCS2:
+		case DESC_RATEVHT2SS_MCS3: 
+		case DESC_RATEVHT2SS_MCS4: 
+		case DESC_RATEVHT2SS_MCS5:
+		case DESC_RATEVHT2SS_MCS6: 
+		case DESC_RATEVHT2SS_MCS7: 
+		case DESC_RATEVHT2SS_MCS8:
+		case DESC_RATEVHT2SS_MCS9:
+			rate_section = 5;
+			break;
+
+		default:
+			RT_TRACE( COMP_POWER, DBG_LOUD, 
+				( "Wrong rate 0x%x\n", rate ) );
+			break;
+	}
+
+	if ( band_temp == BAND_ON_5G  && rate_section == 0 )
+			RT_TRACE( COMP_POWER, DBG_LOUD, 
+			( "Wrong rate 0x%x: No CCK in 5G Band\n", rate ) );
+
+	/*workaround for wrong index combination to obtain tx power limit, 
+	  OFDM only exists in BW 20M*/
+	if ( rate_section == 1 )
+		bandwidth_temp = 0;
+
+	/*workaround for wrong indxe combination to obtain tx power limit, 
+	HT on 80M will reference to HT on 40M*/
+	if ( ( rate_section == 2 || rate_section == 3 ) && band == BAND_ON_5G && 
+		bandwidth_temp == 2 ) {
+		bandwidth_temp = 1;
+	}
+	
+	if ( band == BAND_ON_2_4G )
+		channel_temp = _rtl8812ae_phy_get_channel_index_of_txpower_limit(hw, 
+		BAND_ON_2_4G, channel );
+	else if ( band == BAND_ON_5G )
+		channel_temp = _rtl8812ae_phy_get_channel_index_of_txpower_limit(hw, 
+		BAND_ON_5G, channel );
+	else if ( band == BAND_ON_BOTH ) {
+		/* BAND_ON_BOTH don't care temporarily */
+	}
+	
+	if ( band_temp == -1 || regulation == -1 || bandwidth_temp == -1 || 
+	     rate_section == -1 || channel_temp == -1 )
+	{
+		RT_TRACE( COMP_POWER, DBG_LOUD, ( "Wrong index value to "
+			"access power limit table [band %d][regulation %d]"
+			"[bandwidth %d][rf_path %d][rate_section %d][chnl %d]\n", 
+			  band_temp, regulation, bandwidth_temp, rf_path, 
+			  rate_section, channel_temp));	
+		return MAX_POWER_INDEX;
+	}
+
+	bd = band_temp;
+	regu = regulation;
+	bdwidth = bandwidth_temp;
+	sec = rate_section;
+	chnl = channel_temp;
+
+	if ( band == BAND_ON_2_4G ) {
+		char limits[10] = {0}; 
+		u8 i = 0;
+		for (i = 0; i < 4; ++i)
+			limits[i] = rtlphy->txpwr_limit_2_4g[i][bdwidth]
+			[sec][chnl][rf_path]; 
+
+		power_limit = (regulation == TXPWR_LMT_WW) ? 
+			_rtl8812ae_phy_get_world_wide_limit(limits) :
+			rtlphy->txpwr_limit_2_4g[regu][bdwidth]
+				  	[sec][chnl][rf_path];
+
+	} else if ( band == BAND_ON_5G ) {
+		char limits[10] = {0}; 
+		u8 i = 0;
+		for (i = 0; i < MAX_REGULATION_NUM; ++i)
+			limits[i] = rtlphy->txpwr_limit_5g[i][bdwidth]
+			[sec][chnl][rf_path];
+		
+		power_limit = (regulation == TXPWR_LMT_WW) ? 
+			_rtl8812ae_phy_get_world_wide_limit(limits) : 
+			rtlphy->txpwr_limit_2_4g[regu][chnl]
+			[sec][chnl][rf_path];
+	} else 
+		RT_TRACE( COMP_INIT, DBG_LOUD, 
+		( "No power limit table of the specified band\n"));
+
+	RT_DISP(FPHY, PHY_TXPWR, 
+		("TxPwrLmt[Regulation %d][Band %d][BW %d][RFPath %d]"
+		"[Rate 0x%x][Chnl %d] = %d\n", 
+			regulation, rtlhal->current_bandtype, bandwidth, rf_path, 
+			rate, channel, power_limit));	
+	return power_limit;
+}
+
 static char _rtl8821ae_phy_get_txpower_by_rate(struct ieee80211_hw *hw,
-														   u8 band, u8 path, u8 rate)
+					u8 band, u8 path, u8 rate)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_phy *rtlphy = &(rtlpriv->phy);
+	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
 	u8 shift = 0, rate_section, tx_num; 
 	char tx_pwr_diff = 0;
+	char limit = 0;
 
 	rate_section = _rtl8821ae_phy_get_ratesection_intxpower_byrate(path, rate);
 	tx_num = RF_TX_NUM_NONIMPLEMENT;
@@ -2115,7 +2901,35 @@ static char _rtl8821ae_phy_get_txpower_by_rate(struct ieee80211_hw *hw,
 		break;
 	}
 
-	tx_pwr_diff = (u8) (rtlphy->tx_power_by_rate_offset[band][path][tx_num][rate_section] >> shift) & 0xff;
+	tx_pwr_diff = (u8) (rtlphy->tx_power_by_rate_offset[band][path]
+		[tx_num][rate_section] >> shift) & 0xff;
+
+	//printk("rtlefuse->eeprom_regulatory=%d.\n",rtlefuse->eeprom_regulatory);
+	//if (rtlefuse->eeprom_regulatory == 1) {
+		limit = _rtl8812ae_phy_get_txpower_limit(hw, band, 
+			rtlhal->current_bandtype, path, rate, 
+			rtlphy->h2c_box_num);
+
+		if ( rate == MGN_VHT1SS_MCS8 || rate == MGN_VHT1SS_MCS9  || 
+			 rate == MGN_VHT2SS_MCS8 || rate == MGN_VHT2SS_MCS9 ) 
+		{
+			if ( limit < 0 ) 
+			{
+				if ( tx_pwr_diff < ( -limit ) )
+					tx_pwr_diff = -limit;
+			}
+		}
+		else
+		{
+			if ( limit < 0 )
+				tx_pwr_diff = limit;
+			else
+				tx_pwr_diff = tx_pwr_diff > limit ? limit : tx_pwr_diff;
+		}
+		RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, 
+			( "Maximum power by rate %d, final power by rate %d\n", 
+			limit, tx_pwr_diff ) );
+	//}
 
 	return	tx_pwr_diff;
 }
@@ -2131,10 +2945,13 @@ static u8 _rtl8821ae_get_txpower_index(struct ieee80211_hw *hw, u8 path,
 	bool in_24g = false;
 	char powerdiff_byrate = 0;
 	
-	if (((rtlhal->current_bandtype == BAND_ON_2_4G) && (channel > 14 || channel < 1)) || 
-		((rtlhal->current_bandtype == BAND_ON_5G) && (channel <= 14))) {
+	if (((rtlhal->current_bandtype == BAND_ON_2_4G) && 
+		(channel > 14 || channel < 1)) || 
+		((rtlhal->current_bandtype == BAND_ON_5G) 
+		&& (channel <= 14))) {
 		index = 0;
-		RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, ("Illegal channel!!\n"));
+		RT_TRACE(COMP_POWER_TRACKING, DBG_LOUD, 
+			("Illegal channel!!\n"));
 	}
 
 	in_24g = _rtl8821ae_phy_get_chnl_index(channel, &index);
@@ -2240,330 +3057,428 @@ static void _rtl8821ae_phy_set_txpower_index(struct ieee80211_hw *hw,
 	struct rtl_priv* rtlpriv = rtl_priv(hw);
 	
 	if (path == RF90_PATH_A) {
-        switch (rate) {
-        case DESC_RATE1M:   
-		rtl_set_bbreg(hw, RTXAGC_A_CCK11_CCK1, MASKBYTE0, power_index);
-		break;
-        case DESC_RATE2M:    
-		rtl_set_bbreg(hw, RTXAGC_A_CCK11_CCK1, MASKBYTE1, power_index); 
-		break;
-        case DESC_RATE5_5M:  
-		rtl_set_bbreg(hw, RTXAGC_A_CCK11_CCK1, MASKBYTE2, power_index); 
-		break;
-        case DESC_RATE11M:
-		rtl_set_bbreg(hw, RTXAGC_A_CCK11_CCK1, MASKBYTE3, power_index);
-		break;
-		
-        case DESC_RATE6M:    
-		rtl_set_bbreg(hw, RTXAGC_A_OFDM18_OFDM6, MASKBYTE0, power_index); 
-		break;
-        case DESC_RATE9M:    
-		rtl_set_bbreg(hw, RTXAGC_A_OFDM18_OFDM6, MASKBYTE1, power_index); 
-		break;
-        case DESC_RATE12M:  
-		rtl_set_bbreg(hw, RTXAGC_A_OFDM18_OFDM6, MASKBYTE2, power_index); 
-		break;
-        case DESC_RATE18M:   
-		rtl_set_bbreg(hw, RTXAGC_A_OFDM18_OFDM6, MASKBYTE3, power_index); 
-		break;
+		switch (rate) {
+		case DESC_RATE1M:   
+			rtl_set_bbreg(hw, RTXAGC_A_CCK11_CCK1, 
+				MASKBYTE0, power_index);
+			break;
+		case DESC_RATE2M:    
+			rtl_set_bbreg(hw, RTXAGC_A_CCK11_CCK1, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATE5_5M:  
+			rtl_set_bbreg(hw, RTXAGC_A_CCK11_CCK1, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATE11M:
+			rtl_set_bbreg(hw, RTXAGC_A_CCK11_CCK1, 
+				MASKBYTE3, power_index);
+			break;
+			
+		case DESC_RATE6M:    
+			rtl_set_bbreg(hw, RTXAGC_A_OFDM18_OFDM6, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATE9M:    
+			rtl_set_bbreg(hw, RTXAGC_A_OFDM18_OFDM6, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATE12M:  
+			rtl_set_bbreg(hw, RTXAGC_A_OFDM18_OFDM6, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATE18M:   
+			rtl_set_bbreg(hw, RTXAGC_A_OFDM18_OFDM6, 
+				MASKBYTE3, power_index); 
+			break;
 
-        case DESC_RATE24M:   
-		rtl_set_bbreg(hw, RTXAGC_A_OFDM54_OFDM24, MASKBYTE0, power_index); 
-		break;
-        case DESC_RATE36M:   
-		rtl_set_bbreg(hw, RTXAGC_A_OFDM54_OFDM24, MASKBYTE1, power_index); 
-		break;
-        case DESC_RATE48M:   
-		rtl_set_bbreg(hw, RTXAGC_A_OFDM54_OFDM24, MASKBYTE2, power_index); 
-		break;
-        case DESC_RATE54M:   
-		rtl_set_bbreg(hw, RTXAGC_A_OFDM54_OFDM24, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATE24M:   
+			rtl_set_bbreg(hw, RTXAGC_A_OFDM54_OFDM24, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATE36M:   
+			rtl_set_bbreg(hw, RTXAGC_A_OFDM54_OFDM24, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATE48M:   
+			rtl_set_bbreg(hw, RTXAGC_A_OFDM54_OFDM24, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATE54M:   
+			rtl_set_bbreg(hw, RTXAGC_A_OFDM54_OFDM24, 
+				MASKBYTE3, power_index); 
+			break;
 
-        case DESC_RATEMCS0:  
-		rtl_set_bbreg(hw, RTXAGC_A_MCS03_MCS00, MASKBYTE0, power_index); 
-		break;
-        case DESC_RATEMCS1:  
-		rtl_set_bbreg(hw, RTXAGC_A_MCS03_MCS00, MASKBYTE1, power_index); 
-		break;
-        case DESC_RATEMCS2:  
-		rtl_set_bbreg(hw, RTXAGC_A_MCS03_MCS00, MASKBYTE2, power_index); 
-		break;
-        case DESC_RATEMCS3:  
-		rtl_set_bbreg(hw, RTXAGC_A_MCS03_MCS00, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEMCS0:  
+			rtl_set_bbreg(hw, RTXAGC_A_MCS03_MCS00, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEMCS1:  
+			rtl_set_bbreg(hw, RTXAGC_A_MCS03_MCS00, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEMCS2:  
+			rtl_set_bbreg(hw, RTXAGC_A_MCS03_MCS00, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEMCS3:  
+			rtl_set_bbreg(hw, RTXAGC_A_MCS03_MCS00, 
+				MASKBYTE3, power_index); 
+			break;
 
-        case DESC_RATEMCS4:  
-		rtl_set_bbreg(hw, RTXAGC_A_MCS07_MCS04, MASKBYTE0, power_index); 
-		break;
-        case DESC_RATEMCS5:  
-		rtl_set_bbreg(hw, RTXAGC_A_MCS07_MCS04, MASKBYTE1, power_index); 
-		break;
-        case DESC_RATEMCS6:  
-		rtl_set_bbreg(hw, RTXAGC_A_MCS07_MCS04, MASKBYTE2, power_index); 
-		break;
-        case DESC_RATEMCS7:  
-		rtl_set_bbreg(hw, RTXAGC_A_MCS07_MCS04, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEMCS4:  
+			rtl_set_bbreg(hw, RTXAGC_A_MCS07_MCS04, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEMCS5:  
+			rtl_set_bbreg(hw, RTXAGC_A_MCS07_MCS04, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEMCS6:  
+			rtl_set_bbreg(hw, RTXAGC_A_MCS07_MCS04, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEMCS7:  
+			rtl_set_bbreg(hw, RTXAGC_A_MCS07_MCS04, 
+				MASKBYTE3, power_index); 
+			break;
 
-        case DESC_RATEMCS8:  
-		rtl_set_bbreg(hw, RTXAGC_A_MCS11_MCS08, MASKBYTE0, power_index); 
-		break;
-        case DESC_RATEMCS9:  
-		rtl_set_bbreg(hw, RTXAGC_A_MCS11_MCS08, MASKBYTE1, power_index); 
-		break;
-        case DESC_RATEMCS10: 
-		rtl_set_bbreg(hw, RTXAGC_A_MCS11_MCS08, MASKBYTE2, power_index); 
-		break;
-        case DESC_RATEMCS11: 
-		rtl_set_bbreg(hw, RTXAGC_A_MCS11_MCS08, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEMCS8:  
+			rtl_set_bbreg(hw, RTXAGC_A_MCS11_MCS08, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEMCS9:  
+			rtl_set_bbreg(hw, RTXAGC_A_MCS11_MCS08, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEMCS10: 
+			rtl_set_bbreg(hw, RTXAGC_A_MCS11_MCS08, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEMCS11: 
+			rtl_set_bbreg(hw, RTXAGC_A_MCS11_MCS08, 
+				MASKBYTE3, power_index); 
+			break;
 
-        case DESC_RATEMCS12: 
-		rtl_set_bbreg(hw, RTXAGC_A_MCS15_MCS12, MASKBYTE0, power_index); 
-		break;
-        case DESC_RATEMCS13: 
-		rtl_set_bbreg(hw, RTXAGC_A_MCS15_MCS12, MASKBYTE1, power_index); 
-		break;
-        case DESC_RATEMCS14: 
-		rtl_set_bbreg(hw, RTXAGC_A_MCS15_MCS12, MASKBYTE2, power_index); 
-		break;
-        case DESC_RATEMCS15: 
-		rtl_set_bbreg(hw, RTXAGC_A_MCS15_MCS12, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEMCS12: 
+			rtl_set_bbreg(hw, RTXAGC_A_MCS15_MCS12, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEMCS13: 
+			rtl_set_bbreg(hw, RTXAGC_A_MCS15_MCS12, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEMCS14: 
+			rtl_set_bbreg(hw, RTXAGC_A_MCS15_MCS12, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEMCS15: 
+			rtl_set_bbreg(hw, RTXAGC_A_MCS15_MCS12, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATEVHT1SS_MCS0: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX3_NSS1INDEX0, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS1: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX3_NSS1INDEX0, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS2: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX3_NSS1INDEX0, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS3: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX3_NSS1INDEX0, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEVHT1SS_MCS0: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX3_NSS1INDEX0, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS1: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX3_NSS1INDEX0,
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS2: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX3_NSS1INDEX0, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS3: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX3_NSS1INDEX0, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATEVHT1SS_MCS4: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX7_NSS1INDEX4, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS5: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX7_NSS1INDEX4, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS6: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX7_NSS1INDEX4, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS7: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX7_NSS1INDEX4, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEVHT1SS_MCS4: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX7_NSS1INDEX4, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS5: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX7_NSS1INDEX4, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS6: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX7_NSS1INDEX4, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS7: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS1INDEX7_NSS1INDEX4, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATEVHT1SS_MCS8: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX1_NSS1INDEX8, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS9: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX1_NSS1INDEX8, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS0: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX1_NSS1INDEX8, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS1: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX1_NSS1INDEX8, MASKBYTE3, power_index); 
-		break;
-	
-	case DESC_RATEVHT2SS_MCS2:
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX5_NSS2INDEX2, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS3: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX5_NSS2INDEX2, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS4: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX5_NSS2INDEX2, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS5: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX5_NSS2INDEX2, MASKBYTE3, power_index); 
-		break;
-	
-	case DESC_RATEVHT2SS_MCS6: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX9_NSS2INDEX6, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS7: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX9_NSS2INDEX6, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS8: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX9_NSS2INDEX6, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS9: 
-		rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX9_NSS2INDEX6, MASKBYTE3, power_index); 
-		break;
-		
-        default:
-			RT_TRACE(COMP_POWER, DBG_LOUD, ("Invalid Rate!!\n"));
-            break;				
-        }
-    } else if (path == RF90_PATH_B) {
-	switch (rate) {
-	case DESC_RATE1M:    
-		rtl_set_bbreg(hw, RTXAGC_B_CCK11_CCK1, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATE2M:    
-		rtl_set_bbreg(hw, RTXAGC_B_CCK11_CCK1, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATE5_5M:  
-		rtl_set_bbreg(hw, RTXAGC_B_CCK11_CCK1, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATE11M:   
-		rtl_set_bbreg(hw, RTXAGC_B_CCK11_CCK1, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEVHT1SS_MCS8: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX1_NSS1INDEX8, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS9: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX1_NSS1INDEX8, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS0: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX1_NSS1INDEX8, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS1: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX1_NSS1INDEX8, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATE6M:    
-		rtl_set_bbreg(hw, RTXAGC_B_OFDM18_OFDM6, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATE9M:    
-		rtl_set_bbreg(hw, RTXAGC_B_OFDM18_OFDM6, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATE12M:   
-		rtl_set_bbreg(hw, RTXAGC_B_OFDM18_OFDM6, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATE18M:   
-		rtl_set_bbreg(hw, RTXAGC_B_OFDM18_OFDM6, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEVHT2SS_MCS2:
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX5_NSS2INDEX2, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS3: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX5_NSS2INDEX2, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS4: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX5_NSS2INDEX2, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS5: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX5_NSS2INDEX2, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATE24M:   
-		rtl_set_bbreg(hw, RTXAGC_B_OFDM54_OFDM24, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATE36M:   
-		rtl_set_bbreg(hw, RTXAGC_B_OFDM54_OFDM24, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATE48M:   
-		rtl_set_bbreg(hw, RTXAGC_B_OFDM54_OFDM24, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATE54M:   
-		rtl_set_bbreg(hw, RTXAGC_B_OFDM54_OFDM24, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEVHT2SS_MCS6: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX9_NSS2INDEX6, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS7: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX9_NSS2INDEX6, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS8: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX9_NSS2INDEX6, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS9: 
+			rtl_set_bbreg(hw, RTXAGC_A_NSS2INDEX9_NSS2INDEX6, 
+				MASKBYTE3, power_index); 
+			break;
+			
+		default:
+				RT_TRACE(COMP_POWER, DBG_LOUD, 
+					("Invalid Rate!!\n"));
+		    break;				
+        	}
+    	} else if (path == RF90_PATH_B) {
+		switch (rate) {
+		case DESC_RATE1M:    
+			rtl_set_bbreg(hw, RTXAGC_B_CCK11_CCK1, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATE2M:    
+			rtl_set_bbreg(hw, RTXAGC_B_CCK11_CCK1, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATE5_5M:  
+			rtl_set_bbreg(hw, RTXAGC_B_CCK11_CCK1, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATE11M:   
+			rtl_set_bbreg(hw, RTXAGC_B_CCK11_CCK1, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATEMCS0:  
-		rtl_set_bbreg(hw, RTXAGC_B_MCS03_MCS00, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEMCS1:  
-		rtl_set_bbreg(hw, RTXAGC_B_MCS03_MCS00, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEMCS2:  
-		rtl_set_bbreg(hw, RTXAGC_B_MCS03_MCS00, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEMCS3:  
-		rtl_set_bbreg(hw, RTXAGC_B_MCS03_MCS00, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATE6M:    
+			rtl_set_bbreg(hw, RTXAGC_B_OFDM18_OFDM6, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATE9M:    
+			rtl_set_bbreg(hw, RTXAGC_B_OFDM18_OFDM6, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATE12M:   
+			rtl_set_bbreg(hw, RTXAGC_B_OFDM18_OFDM6, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATE18M:   
+			rtl_set_bbreg(hw, RTXAGC_B_OFDM18_OFDM6, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATEMCS4:  
-		rtl_set_bbreg(hw, RTXAGC_B_MCS07_MCS04, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEMCS5:  
-		rtl_set_bbreg(hw, RTXAGC_B_MCS07_MCS04, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEMCS6:  
-		rtl_set_bbreg(hw, RTXAGC_B_MCS07_MCS04, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEMCS7:  
-		rtl_set_bbreg(hw, RTXAGC_B_MCS07_MCS04, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATE24M:   
+			rtl_set_bbreg(hw, RTXAGC_B_OFDM54_OFDM24, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATE36M:   
+			rtl_set_bbreg(hw, RTXAGC_B_OFDM54_OFDM24, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATE48M:   
+			rtl_set_bbreg(hw, RTXAGC_B_OFDM54_OFDM24, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATE54M:   
+			rtl_set_bbreg(hw, RTXAGC_B_OFDM54_OFDM24, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATEMCS8:  
-		rtl_set_bbreg(hw, RTXAGC_B_MCS11_MCS08, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEMCS9:  
-		rtl_set_bbreg(hw, RTXAGC_B_MCS11_MCS08, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEMCS10: 
-		rtl_set_bbreg(hw, RTXAGC_B_MCS11_MCS08, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEMCS11: 
-		rtl_set_bbreg(hw, RTXAGC_B_MCS11_MCS08, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEMCS0:  
+			rtl_set_bbreg(hw, RTXAGC_B_MCS03_MCS00, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEMCS1:  
+			rtl_set_bbreg(hw, RTXAGC_B_MCS03_MCS00, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEMCS2:  
+			rtl_set_bbreg(hw, RTXAGC_B_MCS03_MCS00, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEMCS3:  
+			rtl_set_bbreg(hw, RTXAGC_B_MCS03_MCS00, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATEMCS12: 
-		rtl_set_bbreg(hw, RTXAGC_B_MCS15_MCS12, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEMCS13: 
-		rtl_set_bbreg(hw, RTXAGC_B_MCS15_MCS12, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEMCS14: 
-		rtl_set_bbreg(hw, RTXAGC_B_MCS15_MCS12, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEMCS15: 
-		rtl_set_bbreg(hw, RTXAGC_B_MCS15_MCS12, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEMCS4:  
+			rtl_set_bbreg(hw, RTXAGC_B_MCS07_MCS04, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEMCS5:  
+			rtl_set_bbreg(hw, RTXAGC_B_MCS07_MCS04, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEMCS6:  
+			rtl_set_bbreg(hw, RTXAGC_B_MCS07_MCS04, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEMCS7:  
+			rtl_set_bbreg(hw, RTXAGC_B_MCS07_MCS04, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATEVHT1SS_MCS0: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX3_NSS1INDEX0, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS1: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX3_NSS1INDEX0, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS2: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX3_NSS1INDEX0, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS3: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX3_NSS1INDEX0, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEMCS8:  
+			rtl_set_bbreg(hw, RTXAGC_B_MCS11_MCS08, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEMCS9:  
+			rtl_set_bbreg(hw, RTXAGC_B_MCS11_MCS08, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEMCS10: 
+			rtl_set_bbreg(hw, RTXAGC_B_MCS11_MCS08, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEMCS11: 
+			rtl_set_bbreg(hw, RTXAGC_B_MCS11_MCS08, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATEVHT1SS_MCS4: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX7_NSS1INDEX4, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS5: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX7_NSS1INDEX4, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS6: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX7_NSS1INDEX4, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS7: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX7_NSS1INDEX4, MASKBYTE3, power_index); 
-		break;
+		case DESC_RATEMCS12: 
+			rtl_set_bbreg(hw, RTXAGC_B_MCS15_MCS12, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEMCS13: 
+			rtl_set_bbreg(hw, RTXAGC_B_MCS15_MCS12, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEMCS14: 
+			rtl_set_bbreg(hw, RTXAGC_B_MCS15_MCS12, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEMCS15: 
+			rtl_set_bbreg(hw, RTXAGC_B_MCS15_MCS12, 
+				MASKBYTE3, power_index); 
+			break;
 
-	case DESC_RATEVHT1SS_MCS8: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX1_NSS1INDEX8, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEVHT1SS_MCS9: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX1_NSS1INDEX8, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS0: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX1_NSS1INDEX8, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS1: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX1_NSS1INDEX8, MASKBYTE3, power_index); 
-		break;
-	
-	case DESC_RATEVHT2SS_MCS2: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX5_NSS2INDEX2, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS3: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX5_NSS2INDEX2, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS4: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX5_NSS2INDEX2, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS5: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX5_NSS2INDEX2, MASKBYTE3, power_index); 
-		break;
-	
-	case DESC_RATEVHT2SS_MCS6: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX9_NSS2INDEX6, MASKBYTE0, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS7: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX9_NSS2INDEX6, MASKBYTE1, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS8: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX9_NSS2INDEX6, MASKBYTE2, power_index); 
-		break;
-	case DESC_RATEVHT2SS_MCS9: 
-		rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX9_NSS2INDEX6, MASKBYTE3, power_index); 
-		break;
-	
-       default:
-		RT_TRACE(COMP_POWER, DBG_LOUD, ("Invalid Rate!!\n"));
-            	break;				
-        }
-    } else {
+		case DESC_RATEVHT1SS_MCS0: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX3_NSS1INDEX0, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS1: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX3_NSS1INDEX0, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS2: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX3_NSS1INDEX0, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS3: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX3_NSS1INDEX0, 
+				MASKBYTE3, power_index); 
+			break;
+
+		case DESC_RATEVHT1SS_MCS4: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX7_NSS1INDEX4, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS5: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX7_NSS1INDEX4, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS6: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX7_NSS1INDEX4, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS7: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS1INDEX7_NSS1INDEX4, 
+				MASKBYTE3, power_index); 
+			break;
+
+		case DESC_RATEVHT1SS_MCS8: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX1_NSS1INDEX8, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEVHT1SS_MCS9: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX1_NSS1INDEX8, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS0: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX1_NSS1INDEX8, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS1: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX1_NSS1INDEX8, 
+				MASKBYTE3, power_index); 
+			break;
+
+		case DESC_RATEVHT2SS_MCS2: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX5_NSS2INDEX2, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS3: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX5_NSS2INDEX2, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS4: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX5_NSS2INDEX2, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS5: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX5_NSS2INDEX2, 
+				MASKBYTE3, power_index); 
+			break;
+
+		case DESC_RATEVHT2SS_MCS6: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX9_NSS2INDEX6, 
+				MASKBYTE0, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS7: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX9_NSS2INDEX6, 
+				MASKBYTE1, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS8: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX9_NSS2INDEX6, 
+				MASKBYTE2, power_index); 
+			break;
+		case DESC_RATEVHT2SS_MCS9: 
+			rtl_set_bbreg(hw, RTXAGC_B_NSS2INDEX9_NSS2INDEX6, 
+				MASKBYTE3, power_index); 
+			break;
+
+		default:
+			RT_TRACE(COMP_POWER, DBG_LOUD, 
+				("Invalid Rate!!\n"));
+		    	break;				
+        	}
+    	} else {
 		RT_TRACE(COMP_POWER, DBG_LOUD, ("Invalid RFPath!!\n"));
     }
 }
@@ -2602,7 +3517,7 @@ static void _rtl8821ae_phy_txpower_training_by_path(struct ieee80211_hw *hw,
 		offset =  RA_TXPWRTRAING;
 	} else {
 		power_level =
-			_rtl8821ae_get_txpower_index(hw, RF90_PATH_A, 
+			_rtl8821ae_get_txpower_index(hw, RF90_PATH_B, 
 			DESC_RATEMCS7, bw, channel);
 		offset =  RB_TXPWRTRAING;
 	}	
@@ -2625,125 +3540,58 @@ void rtl8821ae_phy_set_txpower_level_by_path(struct ieee80211_hw *hw, u8 channel
 	//struct rtl_efuse *rtlefuse = rtl_efuse(rtl_priv(hw));
 	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
 	struct rtl_phy *rtlphy = &(rtl_priv(hw)->phy);
-	u8 cck_rates[]  = {DESC_RATE1M, DESC_RATE2M, DESC_RATE5_5M, DESC_RATE11M};
-	u8 ofdm_rates[]  = {DESC_RATE6M, DESC_RATE9M, DESC_RATE12M, DESC_RATE18M,
-						DESC_RATE24M, DESC_RATE36M, DESC_RATE48M, DESC_RATE54M};
-	u8 ht_rates_1t[]  = {DESC_RATEMCS0, DESC_RATEMCS1, DESC_RATEMCS2, DESC_RATEMCS3,
-						 DESC_RATEMCS4, DESC_RATEMCS5, DESC_RATEMCS6, DESC_RATEMCS7};
-	u8 ht_rates_2t[]  = {DESC_RATEMCS8, DESC_RATEMCS9, DESC_RATEMCS10, DESC_RATEMCS11,
-						 DESC_RATEMCS12, DESC_RATEMCS13, DESC_RATEMCS14, DESC_RATEMCS15};
-	u8 vht_rates_1t[]  = {DESC_RATEVHT1SS_MCS0, DESC_RATEVHT1SS_MCS1, DESC_RATEVHT1SS_MCS2, 
-						DESC_RATEVHT1SS_MCS3, DESC_RATEVHT1SS_MCS4,
-						  DESC_RATEVHT1SS_MCS5, DESC_RATEVHT1SS_MCS6, DESC_RATEVHT1SS_MCS7, 
-						  DESC_RATEVHT1SS_MCS8, DESC_RATEVHT1SS_MCS9};
-	u8 vht_rates_2t[]  = {DESC_RATEVHT2SS_MCS0, DESC_RATEVHT2SS_MCS1, DESC_RATEVHT2SS_MCS2, 
-						DESC_RATEVHT2SS_MCS3, DESC_RATEVHT2SS_MCS4,
-						  DESC_RATEVHT2SS_MCS5, DESC_RATEVHT2SS_MCS6, DESC_RATEVHT2SS_MCS7, 
-						  DESC_RATEVHT2SS_MCS8, DESC_RATEVHT2SS_MCS9};
-	//u8 i,size;
-	//u8 power_index;
+	u8 cck_rates[]  = {DESC_RATE1M, DESC_RATE2M, DESC_RATE5_5M, 
+		              DESC_RATE11M};
+	u8 sizes_of_cck_retes = 4;
+	u8 ofdm_rates[]  = {DESC_RATE6M, DESC_RATE9M, DESC_RATE12M, 
+		                 DESC_RATE18M,DESC_RATE24M, DESC_RATE36M, 
+		                 DESC_RATE48M, DESC_RATE54M};
+	u8 sizes_of_ofdm_retes = 8;
+	u8 ht_rates_1t[]  = {DESC_RATEMCS0, DESC_RATEMCS1, DESC_RATEMCS2, 
+		                 DESC_RATEMCS3,DESC_RATEMCS4, DESC_RATEMCS5, 
+		                 DESC_RATEMCS6, DESC_RATEMCS7};
+	u8 sizes_of_ht_retes_1t = 8;
+	u8 ht_rates_2t[]  = {DESC_RATEMCS8, DESC_RATEMCS9, 
+		                 DESC_RATEMCS10, DESC_RATEMCS11, 
+		                 DESC_RATEMCS12, DESC_RATEMCS13, 
+		                 DESC_RATEMCS14, DESC_RATEMCS15};
+	u8 sizes_of_ht_retes_2t = 8;
+	u8 vht_rates_1t[]  = {DESC_RATEVHT1SS_MCS0, DESC_RATEVHT1SS_MCS1, 
+		                   DESC_RATEVHT1SS_MCS2, DESC_RATEVHT1SS_MCS3, 
+		                   DESC_RATEVHT1SS_MCS4, DESC_RATEVHT1SS_MCS5, 
+		                   DESC_RATEVHT1SS_MCS6, DESC_RATEVHT1SS_MCS7, 
+			     DESC_RATEVHT1SS_MCS8, DESC_RATEVHT1SS_MCS9};
+	u8 vht_rates_2t[]  = {DESC_RATEVHT2SS_MCS0, DESC_RATEVHT2SS_MCS1, 
+		                   DESC_RATEVHT2SS_MCS2, DESC_RATEVHT2SS_MCS3, 
+		                   DESC_RATEVHT2SS_MCS4, DESC_RATEVHT2SS_MCS5, 
+		                   DESC_RATEVHT2SS_MCS6, DESC_RATEVHT2SS_MCS7, 
+			     DESC_RATEVHT2SS_MCS8, DESC_RATEVHT2SS_MCS9};
+	u8 sizes_of_vht_retes = 10;
 
 	if (rtlhal->current_bandtype == BAND_ON_2_4G) 
-		_rtl8821ae_phy_set_txpower_level_by_path(hw,cck_rates,path,channel, 
-		                                         sizeof(cck_rates) / sizeof(u8));
+		_rtl8821ae_phy_set_txpower_level_by_path(hw,cck_rates, path, channel, 
+		                                                                   sizes_of_cck_retes);
 
-	_rtl8821ae_phy_set_txpower_level_by_path(hw,ofdm_rates,path,channel,
-		                                     sizeof(ofdm_rates) / sizeof(u8));
-	_rtl8821ae_phy_set_txpower_level_by_path(hw,ht_rates_1t,path,channel,
-		                                     sizeof(ht_rates_1t) / sizeof(u8));
-	_rtl8821ae_phy_set_txpower_level_by_path(hw,vht_rates_1t,path,channel,
-		                                     sizeof(vht_rates_1t) / sizeof(u8));
+	_rtl8821ae_phy_set_txpower_level_by_path(hw,ofdm_rates, path, channel,
+		                                                     sizes_of_ofdm_retes);
+	_rtl8821ae_phy_set_txpower_level_by_path(hw,ht_rates_1t, path, channel,
+		                                                     sizes_of_ht_retes_1t);
+	_rtl8821ae_phy_set_txpower_level_by_path(hw,vht_rates_1t, path, channel,
+		                                                     sizes_of_vht_retes);
 	
 	if (rtlphy->num_total_rfpath >= 2) {
-		_rtl8821ae_phy_set_txpower_level_by_path(hw,ht_rates_2t,path,channel,
-			                                     sizeof(ht_rates_2t) / sizeof(u8));
-		_rtl8821ae_phy_set_txpower_level_by_path(hw,vht_rates_2t,path,channel,
-			                                     sizeof(vht_rates_2t) / sizeof(u8));
+		_rtl8821ae_phy_set_txpower_level_by_path(hw,ht_rates_2t, path, 
+						           channel, 
+						           sizes_of_ht_retes_2t);
+		_rtl8821ae_phy_set_txpower_level_by_path(hw,vht_rates_2t, path, 
+						           channel,
+			                                                     sizes_of_vht_retes);
 	} 
 
-	_rtl8821ae_phy_txpower_training_by_path(hw, rtlphy->current_chan_bw, channel, path);
+	_rtl8821ae_phy_txpower_training_by_path(hw, rtlphy->current_chan_bw, 
+		                                                    channel, path);
 }
 /*just in case, write txpower in DW, to reduce time*/
-#if 0
-void _rtl8821ae_phy_get_txpower_index_by_rate_array(struct ieee80211_hw *hw, u8 channel,
-											u8 *rate, u8 path, u8 bw, u8 *power_index, u8 size)
-{
-	u8 i;
-	for (i = 0; i < size; i++) 
-		power_index[i] = _rtl8821ae_get_txpower_index(hw, path, rate[i], bw, channel);
-}
-	
-void rtl8821ae_phy_set_txpower_level_by_path2(struct ieee80211_hw *hw, u8 channel, u8 path)
-{
-	struct rtl_efuse *rtlefuse = rtl_efuse(rtl_priv(hw));
-	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
-	struct rtl_phy *rtlphy = &(rtl_priv(hw)->phy);
-	u8 cck_rates[]  = {DESC_RATE1M, DESC_RATE2M, DESC_RATE5_5M, DESC_RATE11M};
-	u8 ofdm_rates[]  = {DESC_RATE6M, DESC_RATE9M, DESC_RATE12M, DESC_RATE18M,
-						DESC_RATE24M, DESC_RATE36M, DESC_RATE48M, DESC_RATE54M};
-	u8 ht_rates_1t[]  = {DESC_RATEMCS0, DESC_RATEMCS1, DESC_RATEMCS2, DESC_RATEMCS3,
-						 DESC_RATEMCS4, DESC_RATEMCS5, DESC_RATEMCS6, DESC_RATEMCS7};
-	u8 ht_rates_2t[]  = {DESC_RATEMCS8, DESC_RATEMCS9, DESC_RATEMCS10, DESC_RATEMCS11,
-						 DESC_RATEMCS12, DESC_RATEMCS13, DESC_RATEMCS14, DESC_RATEMCS15};
-	u8 vht_rates_1t[]  = {DESC_RATEVHT1SS_MCS0, DESC_RATEVHT1SS_MCS1, DESC_RATEVHT1SS_MCS2, DESC_RATEVHT1SS_MCS3, DESC_RATEVHT1SS_MCS4,
-						  DESC_RATEVHT1SS_MCS5, DESC_RATEVHT1SS_MCS6, DESC_RATEVHT1SS_MCS7, DESC_RATEVHT1SS_MCS8, DESC_RATEVHT1SS_MCS9};
-	u8 vht_rates_2t[]  = {DESC_RATEVHT2SS_MCS0, DESC_RATEVHT2SS_MCS1, DESC_RATEVHT2SS_MCS2, DESC_RATEVHT2SS_MCS3, DESC_RATEVHT2SS_MCS4,
-						  DESC_RATEVHT2SS_MCS5, DESC_RATEVHT2SS_MCS6, DESC_RATEVHT2SS_MCS7, DESC_RATEVHT2SS_MCS8, DESC_RATEVHT2SS_MCS9};
-	u8 i, j;
-	u8 pwridx[48] = {0};
-	u8 cs = sizeof(cck_rates) / sizeof(u8);
-	u8 os = sizeof(ofdm_rates) / sizeof(u8);
-	u8 h1s = sizeof(ht_rates_1t) / sizeof(u8);
-	u8 h2s = sizeof(ht_rates_2t) / sizeof(u8);
-	u8 v1s = sizeof(vht_rates_1t) / sizeof(u8);
-	u8 v2s = sizeof(vht_rates_2t) / sizeof(u8);
-
-	u8 len, start;
-	u32 reg_addr, power_index;
-	u8 bw = rtlphy->current_chan_bw;
-	
-	_rtl8821ae_phy_get_txpower_index_by_rate_array(hw, channel,
-		ofdm_rates, path, bw, &pwridx[cs], os);
-
-	_rtl8821ae_phy_get_txpower_index_by_rate_array(hw, channel,
-		ht_rates_1t, path, bw, &pwridx[cs+os], h1s);
-
-	_rtl8821ae_phy_get_txpower_index_by_rate_array(hw, channel,
-		vht_rates_1t, path, bw, &pwridx[cs+os+h1s+h2s], v1s);
-
-
-	if (rtlhal->current_bandtype == BAND_ON_2_4G) {
-		_rtl8821ae_phy_get_txpower_index_by_rate_array(hw, channel,
-			cck_rates, path, bw, pwridx, cs);
-
-		start = 0;
-	} else {
-		start = cs;
-	}
-	
-	reg_addr = (path == 0) ? RTXAGC_A_CCK11_CCK1 : RTXAGC_B_CCK11_CCK1;
-	reg_addr += start;
-
-	len = cs + os + h1s + h2s + v1s;
-	if (rtlphy->num_total_rfpath >= 2) {
-		_rtl8821ae_phy_get_txpower_index_by_rate_array(hw, channel,
-			ht_rates_2t, path, bw, &pwridx[cs+os+h1s], h2s);
-		
-		_rtl8821ae_phy_get_txpower_index_by_rate_array(hw, channel,
-			vht_rates_2t, path, bw, &pwridx[cs+os+h1s+h2s+v1s], v2s);
-
-		len += v2s;
-	}
-	for (i = start; i < len; i += 4) {
-		power_index = 0;
-		for (j = 0; j < 4; j++)
-			power_index |= (pwridx[i+j] << (j*8));
-		rtl_set_bbreg(hw, reg_addr + i, MASKDWORD, power_index);
-	}
-
-	_rtl8821ae_phy_txpower_training_by_path(hw, rtlphy->current_chan_bw, channel, path);
-}
-#endif
 
 void rtl8821ae_phy_set_txpower_level(struct ieee80211_hw *hw, u8 channel)
 {
@@ -3087,7 +3935,7 @@ u8 rtl8821ae_phy_sw_chnl(struct ieee80211_hw *hw)
 	rtlphy->sw_chnl_inprogress = false;
 	return 1;
 }
-
+#if 0
 static u8 _rtl8821ae_phy_path_a_iqk(struct ieee80211_hw *hw, bool config_pathb)
 {
 	u32 reg_eac, reg_e94, reg_e9c, reg_ea4;
@@ -3122,118 +3970,7 @@ static u8 _rtl8821ae_phy_path_a_iqk(struct ieee80211_hw *hw, bool config_pathb)
 		result |= 0x02;*/
 	return result;
 }
-#if 0
-static u8 _rtl8821ae_phy_path_b_iqk(struct ieee80211_hw *hw)
-{
-	u32 reg_eac, reg_eb4, reg_ebc, reg_ec4, reg_ecc;
-	u8 result = 0x00;
 
-	rtl_set_bbreg(hw, 0xe60, MASKDWORD, 0x00000002);
-	rtl_set_bbreg(hw, 0xe60, MASKDWORD, 0x00000000);
-	mdelay(IQK_DELAY_TIME);
-	reg_eac = rtl_get_bbreg(hw, 0xeac, MASKDWORD);
-	reg_eb4 = rtl_get_bbreg(hw, 0xeb4, MASKDWORD);
-	reg_ebc = rtl_get_bbreg(hw, 0xebc, MASKDWORD);
-	reg_ec4 = rtl_get_bbreg(hw, 0xec4, MASKDWORD);
-	reg_ecc = rtl_get_bbreg(hw, 0xecc, MASKDWORD);
-
-	if (!(reg_eac & BIT(31)) &&
-	    (((reg_eb4 & 0x03FF0000) >> 16) != 0x142) &&
-	    (((reg_ebc & 0x03FF0000) >> 16) != 0x42))
-		result |= 0x01;
-	else
-		return result;
-	if (!(reg_eac & BIT(30)) &&
-	    (((reg_ec4 & 0x03FF0000) >> 16) != 0x132) &&
-	    (((reg_ecc & 0x03FF0000) >> 16) != 0x36))
-		result |= 0x02;
-	return result;
-}
-
-static u8 _rtl8821ae_phy_path_a_rx_iqk(struct ieee80211_hw *hw, bool config_pathb)
-{
-	u32 reg_eac, reg_e94, reg_e9c, reg_ea4,u32temp;
-	u8 result = 0x00;
-
-	/*Get TXIMR Setting*/
-	/*Modify RX IQK mode table*/
-	rtl_set_bbreg(hw, RFPGA0_IQK, MASKDWORD, 0x00000000);
-	rtl_set_rfreg(hw, RF90_PATH_A, RF_WE_LUT, RFREG_OFFSET_MASK, 0x800a0);
-	rtl_set_rfreg(hw, RF90_PATH_A, RF_RCK_OS, RFREG_OFFSET_MASK, 0x30000);
-	rtl_set_rfreg(hw, RF90_PATH_A, RF_TXPA_G1, RFREG_OFFSET_MASK, 0x0000f);
-	rtl_set_rfreg(hw, RF90_PATH_A, RF_TXPA_G2, RFREG_OFFSET_MASK, 0xf117b);
-	rtl_set_bbreg(hw, RFPGA0_IQK, MASKDWORD, 0x80800000);
-
-	/*IQK Setting*/
-	rtl_set_bbreg(hw, RTx_IQK, MASKDWORD, 0x01007c00);
-	rtl_set_bbreg(hw, RRx_IQK, MASKDWORD, 0x81004800);
-
-	/*path a IQK setting*/
-	rtl_set_bbreg(hw, RTx_IQK_Tone_A, MASKDWORD, 0x10008c1c);
-	rtl_set_bbreg(hw, RRx_IQK_Tone_A, MASKDWORD, 0x30008c1c);
-	rtl_set_bbreg(hw, RTx_IQK_PI_A, MASKDWORD, 0x82160804);
-	rtl_set_bbreg(hw, RRx_IQK_PI_A, MASKDWORD, 0x28160000);
-
-	/*LO calibration Setting*/
-	rtl_set_bbreg(hw, RIQK_AGC_Rsp, MASKDWORD, 0x0046a911);
-	/*one shot,path A LOK & iqk*/
-	rtl_set_bbreg(hw, RIQK_AGC_Pts, MASKDWORD, 0xf9000000);
-	rtl_set_bbreg(hw, RIQK_AGC_Pts, MASKDWORD, 0xf8000000);
-
-	mdelay(IQK_DELAY_TIME);
-
-	reg_eac = rtl_get_bbreg(hw, RRx_Power_After_IQK_A_2, MASKDWORD);
-	reg_e94 = rtl_get_bbreg(hw, RTx_Power_Before_IQK_A, MASKDWORD);
-	reg_e9c = rtl_get_bbreg(hw, RTx_Power_After_IQK_A, MASKDWORD);
-
-
-	if (!(reg_eac & BIT(28)) &&
-	    (((reg_e94 & 0x03FF0000) >> 16) != 0x142) &&
-	    (((reg_e9c & 0x03FF0000) >> 16) != 0x42))
-		result |= 0x01;
-	else
-		return result;
-
-	u32temp = 0x80007C00 | (reg_e94&0x3FF0000)  | ((reg_e9c&0x3FF0000) >> 16);
-	rtl_set_bbreg(hw, RTx_IQK, MASKDWORD, u32temp);
-	/*RX IQK*/
-	/*Modify RX IQK mode table*/
-	rtl_set_bbreg(hw, RFPGA0_IQK, MASKDWORD, 0x00000000);
-	rtl_set_rfreg(hw, RF90_PATH_A, RF_WE_LUT, RFREG_OFFSET_MASK, 0x800a0);
-	rtl_set_rfreg(hw, RF90_PATH_A, RF_RCK_OS, RFREG_OFFSET_MASK, 0x30000);
-	rtl_set_rfreg(hw, RF90_PATH_A, RF_TXPA_G1, RFREG_OFFSET_MASK, 0x0000f);
-	rtl_set_rfreg(hw, RF90_PATH_A, RF_TXPA_G2, RFREG_OFFSET_MASK, 0xf7ffa);
-	rtl_set_bbreg(hw, RFPGA0_IQK, MASKDWORD, 0x80800000);
-
-	/*IQK Setting*/
-	rtl_set_bbreg(hw, RRx_IQK, MASKDWORD, 0x01004800);
-
-	/*path a IQK setting*/
-	rtl_set_bbreg(hw, RTx_IQK_Tone_A, MASKDWORD, 0x30008c1c);
-	rtl_set_bbreg(hw, RRx_IQK_Tone_A, MASKDWORD, 0x10008c1c);
-	rtl_set_bbreg(hw, RTx_IQK_PI_A, MASKDWORD, 0x82160c05);
-	rtl_set_bbreg(hw, RRx_IQK_PI_A, MASKDWORD, 0x28160c05);
-
-	/*LO calibration Setting*/
-	rtl_set_bbreg(hw, RIQK_AGC_Rsp, MASKDWORD, 0x0046a911);
-	/*one shot,path A LOK & iqk*/
-	rtl_set_bbreg(hw, RIQK_AGC_Pts, MASKDWORD, 0xf9000000);
-	rtl_set_bbreg(hw, RIQK_AGC_Pts, MASKDWORD, 0xf8000000);
-
-	mdelay(IQK_DELAY_TIME);
-
-	reg_eac = rtl_get_bbreg(hw, RRx_Power_After_IQK_A_2, MASKDWORD);
-	reg_e94 = rtl_get_bbreg(hw, RTx_Power_Before_IQK_A, MASKDWORD);
-	reg_e9c = rtl_get_bbreg(hw, RTx_Power_After_IQK_A, MASKDWORD);
-	reg_ea4 = rtl_get_bbreg(hw, RRx_Power_Before_IQK_A_2, MASKDWORD);
-
-	if (!(reg_eac & BIT(27)) &&
-	    (((reg_ea4 & 0x03FF0000) >> 16) != 0x132) &&
-	    (((reg_eac & 0x03FF0000) >> 16) != 0x36))
-		result |= 0x02;
-	return result;
-}
-#endif
 static void _rtl8821ae_phy_path_a_fill_iqk_matrix(struct ieee80211_hw *hw,
 					       bool b_iqk_ok, long result[][8],
 					       u8 final_candidate, bool btxonly)
@@ -3424,7 +4161,7 @@ static bool _rtl8821ae_phy_simularity_compare(struct ieee80211_hw *hw,
 	}
 
 }
-
+#endif
 u8 _rtl8812ae_get_right_chnl_place_for_iqk(u8 chnl)
 {
 	u8 channel_all[TARGET_CHNL_NUM_2G_5G_8812] = 
@@ -3640,7 +4377,7 @@ void _rtl8812ae_iqk_tx(
 	struct rtl_phy *rtlphy = &(rtlpriv->phy);
 	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
 	
-	u8 delay_count, cal = 0;
+	u8 delay_count;
 	u8 cal0_retry, cal1_retry;
 	u8 tx0_average = 0, tx1_average = 0, rx0_average = 0, rx1_average = 0;
     	int tx0_x = 0, tx0_y = 0, rx0_x = 0, rx0_y = 0;
@@ -3651,7 +4388,7 @@ void _rtl8812ae_iqk_tx(
 	bool iqk0_ready = false, tx0_finish = false, rx0_finish = false;
 	bool tx1iqkok = false, rx1iqkok = false, tx1_fail = true, rx1_fail;
 	bool iqk1_ready = false, tx1_finish = false, rx1_finish = false, vdf_enable = false;
-	int i, k, vdf_y[3], vdf_x[3], tx_dt[3], rx_dt[3], ii, dx = 0, dy = 0, dt = 0;
+	int i, tx_dt[3] = {0}, rx_dt[3] = {0}, ii, dx = 0, dy = 0;
 	
 	RT_TRACE(COMP_IQK, DBG_LOUD, 
 			("BandWidth = %d.\n", 
@@ -5292,7 +6029,9 @@ static void _rtl8821ae_phy_lc_calibrate(struct ieee80211_hw *hw, bool is2t)
 	/* rtl_set_rfreg(hw, RF90_PATH_A, 0x18, MASK12BITS, lc_cal | 0x08000); */
 	rtl_set_rfreg(hw, RF90_PATH_A, 0x18, MASK12BITS, 0x8c0a);
 
-	mdelay(100);
+	/* In order not to disturb BT music when wifi init.(1ant NIC only) */
+	/*mdelay(100);*/
+	msleep(100);
 
 	rtl_set_rfreg(hw, RF90_PATH_A, 0xb0, RFREG_OFFSET_MASK, 0xdffe0);
 
