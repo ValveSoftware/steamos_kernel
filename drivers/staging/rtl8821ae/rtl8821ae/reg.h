@@ -696,6 +696,7 @@
 #define	EEPROM_VERSION					0xC4
 #define	EEPROM_CUSTOMER_ID					0xC5
 #define	EEPROM_RF_ANTENNA_OPT_88E			0xC9
+#define	EEPROM_RFE_OPTION				0xCA
 
 #define	EEPROM_MAC_ADDR					0xD0
 #define EEPROM_VID							0xD6

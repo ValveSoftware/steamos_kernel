@@ -623,16 +623,20 @@ static int rtl_op_config(struct ieee80211_hw *hw, u32 changed)
 	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
 		struct ieee80211_channel *channel = hw->conf.chandef.chan;
-		/* channel_type is for 20&40M */
-		enum nl80211_channel_type channel_type =
-			 cfg80211_get_chandef_type(&(hw->conf.chandef));
 		enum nl80211_chan_width width = hw->conf.chandef.width;
 #else
 		struct ieee80211_channel *channel = hw->conf.channel;
-		enum nl80211_channel_type channel_type = hw->conf.channel_type;
 #endif
 		u8 wide_chan = (u8) channel->hw_value;
+		enum nl80211_channel_type channel_type = NL80211_CHAN_NO_HT;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+		/* channel_type is for 20&40M */
+		if (width < NL80211_CHAN_WIDTH_80)
+			channel_type = cfg80211_get_chandef_type(&(hw->conf.chandef));
+#else
+		channel_type = hw->conf.channel_type;
+#endif
 		if (mac->act_scanning)
 			mac->n_channels++;
 
@@ -654,8 +658,6 @@ static int rtl_op_config(struct ieee80211_hw *hw, u32 changed)
 		 */
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
-
-//		printk("band width is %d\n", width);
 		if (width >= NL80211_CHAN_WIDTH_80) {
 			if (width == NL80211_CHAN_WIDTH_80) {
 				u32 center_freq = hw->conf.chandef.center_freq1;
@@ -1045,13 +1047,6 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 			mac->assoc_id = bss_conf->aid;
 			memcpy(mac->bssid, bss_conf->bssid, 6);
 
-			mac->b_vht_ldpc_rx = (bool)(sta->vht_cap.cap
-				| IEEE80211_VHT_CAP_RXLDPC);
-			mac->b_vht_stbc_rx  = (bool)(sta->vht_cap.cap
-				| IEEE80211_VHT_CAP_RXSTBC_1
-				| IEEE80211_VHT_CAP_RXSTBC_2
-				| IEEE80211_VHT_CAP_RXSTBC_3
-				| IEEE80211_VHT_CAP_RXSTBC_4);
 			if (rtlpriv->cfg->ops->linked_set_reg)
 				rtlpriv->cfg->ops->linked_set_reg(hw);
 
@@ -1106,8 +1101,6 @@ static void rtl_op_bss_info_changed(struct ieee80211_hw *hw,
 			memset(mac->bssid, 0, 6);
 			mac->vendor = PEER_UNKNOWN;
 			mac->mode = 0;
-			mac->b_vht_ldpc_rx = false;
-			mac->b_vht_stbc_rx = false;
 
 			if (rtlpriv->dm.supp_phymode_switch) {
 				if (rtlpriv->cfg->ops->check_switch_to_dmdp)

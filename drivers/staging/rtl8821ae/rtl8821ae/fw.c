@@ -201,6 +201,18 @@ exit:
 	return err;
 }
 
+void _rtl8821ae_wait_for_h2c_cmd_finish(struct rtl_priv *rtlpriv)
+{
+	u8 val;
+	u16 count = 0;
+
+	do {
+		val = rtl_read_byte(rtlpriv, REG_HMETFR);
+		msleep(1);
+		count++;
+	} while ((val & 0x0F) && (count < 1000));
+}
+
 int rtl8821ae_download_fw(struct ieee80211_hw *hw, bool buse_wake_on_wlan_fw)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
@@ -209,8 +221,15 @@ int rtl8821ae_download_fw(struct ieee80211_hw *hw, bool buse_wake_on_wlan_fw)
 	u8 *pfwdata;
 	u32 fwsize;
 	int err;
+	bool b_support_remote_wakeup;
 	enum version_8821ae version = rtlhal->version;
 
+	rtlpriv->cfg->ops->get_hw_reg(hw, HAL_DEF_WOWLAN,
+				      (u8 *) (&b_support_remote_wakeup));
+
+	if (b_support_remote_wakeup)
+		_rtl8821ae_wait_for_h2c_cmd_finish(rtlpriv);
+	
 	if (buse_wake_on_wlan_fw) {
 		if (!rtlhal->p_wowlan_firmware)
 			return 1;
@@ -238,17 +257,18 @@ int rtl8821ae_download_fw(struct ieee80211_hw *hw, bool buse_wake_on_wlan_fw)
 	if (IS_FW_HEADER_EXIST_8812(pfwheader) ||
 	    IS_FW_HEADER_EXIST_8821(pfwheader)) {
 		RT_TRACE(COMP_FW, DBG_DMESG,
-			 ("Firmware Version(%d), Signature(%#x),Size(%d)\n",
-			  pfwheader->version, pfwheader->signature,
-			  (int)sizeof(struct rtl8821a_firmware_header)));
+			 ("Firmware Version(%d), Signature(%#x)\n",
+			  pfwheader->version, pfwheader->signature));
 
 		pfwdata = pfwdata + sizeof(struct rtl8821a_firmware_header);
 		fwsize = fwsize - sizeof(struct rtl8821a_firmware_header);
 	}
 
-	if(rtl_read_byte(rtlpriv, REG_MCUFWDL) & BIT(7)){
-		rtl_write_byte(rtlpriv, REG_MCUFWDL, 0x00);
-		rtl8821ae_firmware_selfreset(hw);
+	if (rtlhal->b_mac_func_enable) {
+		if(rtl_read_byte(rtlpriv, REG_MCUFWDL) & BIT(7)){
+			rtl_write_byte(rtlpriv, REG_MCUFWDL, 0x00);
+			rtl8821ae_firmware_selfreset(hw);
+		}
 	}
 	_rtl8821ae_enable_fw_download(hw, true);
 	_rtl8821ae_write_fw(hw, version, pfwdata, fwsize);

@@ -112,8 +112,9 @@ int rtl8821ae_init_sw_vars(struct ieee80211_hw *hw)
 	rtlpci->transmit_config = CFENDFORM | BIT(15) | BIT(24) | BIT(25);
 	
 	mac->ht_enable = true;
-	mac->b_vht_ldpc_rx = false;
-	mac->b_vht_stbc_rx = false;
+	mac->ht_cur_stbc = mac->ht_stbc_cap = 0;
+	mac->vht_cur_ldpc = mac->vht_ldpc_cap = 0;
+	mac->vht_cur_stbc = mac->vht_stbc_cap = 0;
 
 	rtlpriv->rtlhal.current_bandtype = BAND_ON_2_4G;
 	/*following 2 is for register 5G band, refer to _rtl_init_mac80211()*/

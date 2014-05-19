@@ -279,6 +279,21 @@ static int _rtl8821ae_rate_mapping(struct ieee80211_hw *hw,
 	}
 	return rate_idx;
 }
+static u16 odm_cfo(char value)
+{
+	int ret_val;
+	
+	if (value < 0) {
+		ret_val = 0 - value;
+		ret_val = (ret_val << 1) + (ret_val >> 1);
+		ret_val = ret_val | BIT(12);  // set bit12 as 1 for negative cfo
+	} else {
+		ret_val = value;
+		ret_val = (ret_val << 1) + (ret_val >> 1);
+	}
+	return ret_val;
+}
+
 
 static void _rtl8821ae_query_rxphystatus(struct ieee80211_hw *hw,
 			struct rtl_stats *pstatus, u8 *pdesc,
@@ -286,12 +301,10 @@ static void _rtl8821ae_query_rxphystatus(struct ieee80211_hw *hw,
 			bool bpacket_toself, bool b_packet_beacon)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
-	struct rtl_ps_ctl *ppsc = rtl_psc(rtlpriv);
-	struct phy_sts_cck_8821ae_t *cck_buf;
-	struct phy_status_rpt *p_phystRpt = (struct phy_status_rpt *)p_drvinfo;
+	struct phy_status_rpt *p_phystrpt = (struct phy_status_rpt *)p_drvinfo;
 	struct rtl_dm *rtldm = rtl_dm(rtl_priv(hw));
 	char rx_pwr_all = 0, rx_pwr[4];
-	u8 rf_rx_num = 0, evm, pwdb_all;
+	u8 rf_rx_num = 0, evm, evmdbm, pwdb_all;
 	u8 i, max_spatial_stream;
 	u32 rssi, total_rssi = 0;
 	bool b_is_cck = pstatus->b_is_cck;
@@ -307,80 +320,83 @@ static void _rtl8821ae_query_rxphystatus(struct ieee80211_hw *hw,
 	if (b_is_cck) {
 		u8 cck_highpwr;
 		u8 cck_agc_rpt;
-		/* CCK Driver info Structure is not the same as OFDM packet. */
-		cck_buf = (struct phy_sts_cck_8821ae_t *)p_drvinfo;
-		cck_agc_rpt = cck_buf->cck_agc_rpt;
+
+		cck_agc_rpt = p_phystrpt->cfosho[0];
 
 		/* (1)Hardware does not provide RSSI for CCK */
 		/* (2)PWDB, Average PWDB cacluated by
 		 * hardware (for rate adaptive) */
-		if (ppsc->rfpwr_state == ERFON)
-			cck_highpwr = (u8) rtl_get_bbreg(hw, RFPGA0_XA_HSSIPARAMETER2,
-							 BIT(9));
-		else
-			cck_highpwr = false;
+		cck_highpwr = (u8) rtlpriv->dm.cck_high_power;
 
 		lan_idx = ((cck_agc_rpt & 0xE0) >> 5);
 		vga_idx = (cck_agc_rpt & 0x1f);
-		switch (lan_idx) {
-			case 7:
-				if(vga_idx <= 27)
-					rx_pwr_all = -100 + 2*(27-vga_idx); /*VGA_idx = 27~2*/
-				else
-					rx_pwr_all = -100;
-				break;
-			case 6:
-				rx_pwr_all = -48 + 2*(2-vga_idx); /*VGA_idx = 2~0*/
-				break;
-			case 5:
-				rx_pwr_all = -42 + 2*(7-vga_idx); /*VGA_idx = 7~5*/
-				break;
-			case 4:
-				rx_pwr_all = -36 + 2*(7-vga_idx); /*VGA_idx = 7~4*/
-				break;
-			case 3:
-				rx_pwr_all = -24 + 2*(7-vga_idx); /*VGA_idx = 7~0*/
-				break;
-			case 2:
-				if(cck_highpwr)
-					rx_pwr_all = -12 + 2*(5-vga_idx); /*VGA_idx = 5~0*/
-				else
-					rx_pwr_all = -6+ 2*(5-vga_idx);
-				break;
-			case 1:
-				rx_pwr_all = 8-2*vga_idx;
-				break;
-			case 0:
-				rx_pwr_all = 14-2*vga_idx;
-				break;
-			default:
-				break;
-		}
-		rx_pwr_all += 6;
-		pwdb_all = rtl_query_rxpwrpercentage(rx_pwr_all);
-		/* CCK gain is smaller than OFDM/MCS gain,  */
-		/* so we add gain diff by experiences,
-		 * the val is 6 */
-		pwdb_all += 6;
-		if(pwdb_all > 100)
-			pwdb_all = 100;
-		/* modify the offset to make the same
-		 * gain index with OFDM. */
-		if(pwdb_all > 34 && pwdb_all <= 42)
-			pwdb_all -= 2;
-		else if(pwdb_all > 26 && pwdb_all <= 34)
-			pwdb_all -= 6;
-		else if(pwdb_all > 14 && pwdb_all <= 26)
-			pwdb_all -= 8;
-		else if(pwdb_all > 4 && pwdb_all <= 14)
-			pwdb_all -= 4;
-		if (cck_highpwr == false){
-			if (pwdb_all >= 80)
-				pwdb_all =((pwdb_all-80)<<1)+((pwdb_all-80)>>1)+80;
-			else if((pwdb_all <= 78) && (pwdb_all >= 20))
-				pwdb_all += 3;
-			if(pwdb_all>100)
-				pwdb_all = 100;
+		if (rtlpriv->rtlhal.hw_type == HARDWARE_TYPE_RTL8812AE) {
+			switch (lan_idx) {
+				case 7:
+					if(vga_idx <= 27)
+						rx_pwr_all = -100 + 2*(27-vga_idx); /*VGA_idx = 27~2*/
+					else
+						rx_pwr_all = -100;
+					break;
+				case 6:
+					rx_pwr_all = -48 + 2*(2-vga_idx); /*VGA_idx = 2~0*/
+					break;
+				case 5:
+					rx_pwr_all = -42 + 2*(7-vga_idx); /*VGA_idx = 7~5*/
+					break;
+				case 4:
+					rx_pwr_all = -36 + 2*(7-vga_idx); /*VGA_idx = 7~4*/
+					break;
+				case 3:
+					rx_pwr_all = -24 + 2*(7-vga_idx); /*VGA_idx = 7~0*/
+					break;
+				case 2:
+					if(cck_highpwr)
+						rx_pwr_all = -12 + 2*(5-vga_idx); /*VGA_idx = 5~0*/
+					else
+						rx_pwr_all = -6+ 2*(5-vga_idx);
+					break;
+				case 1:
+					rx_pwr_all = 8-2*vga_idx;
+					break;
+				case 0:
+					rx_pwr_all = 14-2*vga_idx;
+					break;
+				default:
+					break;
+			}
+			rx_pwr_all += 6;
+			pwdb_all = rtl_query_rxpwrpercentage(rx_pwr_all);
+			if (cck_highpwr == false) {
+				if(pwdb_all >= 80)
+					pwdb_all = ((pwdb_all-80)<<1)+((pwdb_all-80)>>1)+80;
+				else if((pwdb_all <= 78) && (pwdb_all >= 20))
+					pwdb_all += 3;
+				if(pwdb_all>100)
+					pwdb_all = 100;
+			}
+		} else { /* 8821 */
+			char Pout = -6;
+				
+			switch(lan_idx)
+				{
+				case 5:
+					rx_pwr_all = Pout -32 -(2*vga_idx);
+						break;
+				case 4:
+					rx_pwr_all = Pout -24 -(2*vga_idx);
+						break;
+				case 2:
+					rx_pwr_all = Pout -11 -(2*vga_idx);
+						break;
+				case 1:
+					rx_pwr_all = Pout + 5 -(2*vga_idx);
+						break;
+				case 0:
+					rx_pwr_all = Pout + 21 -(2*vga_idx);
+						break;
+				}
+			pwdb_all = rtl_query_rxpwrpercentage(rx_pwr_all);
 		}
 
 		pstatus->rx_pwdb_all = pwdb_all;
@@ -393,7 +409,7 @@ static void _rtl8821ae_query_rxphystatus(struct ieee80211_hw *hw,
 			if (pstatus->rx_pwdb_all > 40)
 				sq = 100;
 			else {
-				sq = cck_buf->sq_rpt;
+				sq = p_phystrpt->pwdb_all;
 				if (sq > 64)
 					sq = 0;
 				else if (sq < 20)
@@ -405,11 +421,9 @@ static void _rtl8821ae_query_rxphystatus(struct ieee80211_hw *hw,
 			pstatus->signalquality = sq;
 			pstatus->rx_mimo_signalquality[0] = sq;
 			pstatus->rx_mimo_signalquality[1] = -1;
+
 		}
 	} else {
-		rtlpriv->dm.brfpath_rxenable[0] =
-		    rtlpriv->dm.brfpath_rxenable[1] = true;
-
 		/* (1)Get RSSI for HT rate */
 		for (i = RF90_PATH_A; i < RF6052_MAX_PATH; i++) {
 
@@ -417,18 +431,19 @@ static void _rtl8821ae_query_rxphystatus(struct ieee80211_hw *hw,
 			if (rtlpriv->dm.brfpath_rxenable[i])
 				rf_rx_num++;
 
-			rx_pwr[i] = (p_drvinfo->gain_trsw[i] & 0x7f) - 110;
+			rx_pwr[i] = (p_phystrpt->gain_trsw[i] & 0x7f) - 110;
 
 			/* Translate DBM to percentage. */
 			rssi = rtl_query_rxpwrpercentage(rx_pwr[i]);
 			total_rssi += rssi;
 
 			/* Get Rx snr value in DB */
-			rtlpriv->stats.rx_snr_db[i] = (long)(p_drvinfo->rxsnr[i] / 2);
-
+			pstatus->rx_snr[i] = rtlpriv->stats.rx_snr_db[i] = p_phystrpt->rxsnr[i] / 2;
+			
+			pstatus->cfo_short[i] = odm_cfo(p_phystrpt->cfosho[i]);
+			pstatus->cfo_tail[i] = odm_cfo(p_phystrpt->cfotail[i]);
 			/* Record Signal Strength for next packet */
-			if (bpacket_match_bssid)
-				pstatus->rx_mimo_signalstrength[i] = (u8) rssi;
+			pstatus->rx_mimo_signalstrength[i] = (u8) rssi;
 		}
 
 		/* (2)PWDB, Average PWDB cacluated by
@@ -451,15 +466,24 @@ static void _rtl8821ae_query_rxphystatus(struct ieee80211_hw *hw,
 			max_spatial_stream = 1;
 
 		for (i = 0; i < max_spatial_stream; i++) {
-			evm = rtl_evm_db_to_percentage(p_drvinfo->rxevm[i]);
+			evm = rtl_evm_db_to_percentage(p_phystrpt->rxevm[i]);
+			evmdbm = rtl_evm_dbm_jaguar(p_phystrpt->rxevm[i]);
 
 			if (bpacket_match_bssid) {
 				/* Fill value in RFD, Get the first
 				 * spatial stream only */
 				if (i == 0)
-					pstatus->signalquality = (u8) (evm & 0xff);
-				pstatus->rx_mimo_signalquality[i] = (u8) (evm & 0xff);
+					pstatus->signalquality = evm;
+				pstatus->rx_mimo_signalquality[i] = evm;
+				pstatus->rx_mimo_evm_dbm[i] = evmdbm;
 			}
+		}
+		if (bpacket_match_bssid) {
+			for (i = RF90_PATH_A; i<= RF90_PATH_B; i++)
+				rtl_priv(hw)->dm.cfo_tail[i] =
+					(char)p_phystrpt->cfotail[i];
+		
+			rtl_priv(hw)->dm.packet_count ++;
 		}
 	}
 
@@ -472,40 +496,10 @@ static void _rtl8821ae_query_rxphystatus(struct ieee80211_hw *hw,
 		pstatus->signalstrength = (u8)(rtl_signal_scale_mapping(hw,
 			total_rssi /= rf_rx_num));
 	/*HW antenna diversity*/
-	rtldm->fat_table.antsel_rx_keep_0 = p_phystRpt->ant_sel;
-	rtldm->fat_table.antsel_rx_keep_1 = p_phystRpt->ant_sel_b;
-	rtldm->fat_table.antsel_rx_keep_2 = p_phystRpt->antsel_rx_keep_2;
-
+	rtldm->fat_table.antsel_rx_keep_0 = p_phystrpt->antidx_anta;
+	rtldm->fat_table.antsel_rx_keep_1 = p_phystrpt->antidx_antb;
 }
-#if 0
-static void _rtl8821ae_smart_antenna(struct ieee80211_hw *hw,
-	struct rtl_stats *pstatus)
-{
-	struct rtl_dm *rtldm= rtl_dm(rtl_priv(hw));
-	struct rtl_efuse *rtlefuse =rtl_efuse(rtl_priv(hw));
-	u8 antsel_tr_mux;
-	struct fast_ant_trainning *pfat_table = &(rtldm->fat_table);
 
-	if (rtlefuse->antenna_div_type == CG_TRX_SMART_ANTDIV) {
-		if (pfat_table->fat_state == FAT_TRAINING_STATE) {
-			if (pstatus->b_packet_toself) {
-				antsel_tr_mux = (pfat_table->antsel_rx_keep_2 << 2) |
-					(pfat_table->antsel_rx_keep_1 << 1) | pfat_table->antsel_rx_keep_0;
-				pfat_table->ant_sum_rssi[antsel_tr_mux] += pstatus->rx_pwdb_all;
-				pfat_table->ant_rssi_cnt[antsel_tr_mux]++;
-			}
-		}
-	} else if ((rtlefuse->antenna_div_type == CG_TRX_HW_ANTDIV) ||
-	(rtlefuse->antenna_div_type == CGCS_RX_HW_ANTDIV)) {
-		if (pstatus->b_packet_toself || pstatus->b_packet_matchbssid) {
-			antsel_tr_mux = (pfat_table->antsel_rx_keep_2 << 2) |
-					(pfat_table->antsel_rx_keep_1 << 1) | pfat_table->antsel_rx_keep_0;
-			rtl8821ae_dm_ant_sel_statistics(hw, antsel_tr_mux, 0, pstatus->rx_pwdb_all);
-		}
-
-	}
-}
-#endif
 static void _rtl8821ae_translate_rx_signal_stuff(struct ieee80211_hw *hw,
 		struct sk_buff *skb, struct rtl_stats *pstatus,
 		u8 *pdesc, struct rx_fwinfo_8821ae *p_drvinfo)
@@ -545,6 +539,15 @@ static void _rtl8821ae_translate_rx_signal_stuff(struct ieee80211_hw *hw,
 	if (b_packet_beacon && b_packet_matchbssid)
 		rtl_priv(hw)->dm.dbginfo.num_qry_beacon_pkt++;
 
+	if (b_packet_matchbssid && 
+		ieee80211_is_data_qos(fc) &&
+		!is_multicast_ether_addr(ieee80211_get_DA(hdr))) {
+		struct ieee80211_qos_hdr *hdr_qos = (struct ieee80211_qos_hdr *)tmp_buf;
+		u16 tid = hdr_qos->qos_ctrl & 0xf;
+		if (tid != 0 && tid != 3)
+			rtl_priv(hw)->dm.dbginfo.num_non_be_pkt++;
+	}
+	
 	_rtl8821ae_query_rxphystatus(hw, pstatus, pdesc, p_drvinfo,
 				   b_packet_matchbssid, b_packet_toself,
 				   b_packet_beacon);
@@ -739,8 +742,9 @@ bool rtl8821ae_rx_query_desc(struct ieee80211_hw *hw,
 	if (status->b_is_short_gi)
 		rx_status->flag |= RX_FLAG_SHORT_GI;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
 	rx_status->vht_nss = status->vht_nss;
-
+#endif
 	rx_status->flag |= RX_FLAG_MACTIME_MPDU;
 
 	/* hw will set status->decrypted true, if it finds the

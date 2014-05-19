@@ -386,6 +386,8 @@ struct phy_rx_agc_info_t {
 		u8	trsw:1,gain:7;
 	#endif
 };
+
+#if 0
 struct phy_status_rpt{
 	struct phy_rx_agc_info_t path_agc[2];
 	u8	ch_corr[2];
@@ -422,7 +424,48 @@ struct phy_status_rpt{
 	u8 	antsel_rx_keep_2:1;	/*ex_intf_flg:1;*/
 #endif
 }__packed;
+#else
+struct phy_status_rpt{
+	/* DWORD 0 */
+	u8 gain_trsw[2];
+#if IS_LITTLE_ENDIAN	
+	u16 chl_num:10;
+	u16 sub_chnl:4;
+	u16 r_rfmod:2;
+#else	/* _BIG_ENDIAN_ */	
+	u16 r_rfmod:2;
+	u16 sub_chnl:4;
+	u16 chl_num:10;
+#endif
+	/* DWORD 1 */
+	u8 pwdb_all;
+	u8 cfosho[4];	/* DW 1 byte 1 DW 2 byte 0 */
+	
+	/* DWORD 2 */
+	char cfotail[4];	/* DW 2 byte 1 DW 3 byte 0 */
+	
+	/* DWORD 3 */
+	char rxevm[2];	/* DW 3 byte 1 DW 3 byte 2 */
+	char rxsnr[2];	/* DW 3 byte 3 DW 4 byte 0 */
+	
+	/* DWORD 4 */
+	u8 pcts_msk_rpt[2];	
+	u8 pdsnr[2];	/* DW 4 byte 3 DW 5 Byte 0 */
+	
+	/* DWORD 5 */
+	u8 csi_current[2];
+	u8 rx_gain_c;
+	
+	/* DWORD 6 */
+	u8 rx_gain_d;
+	u8 sigevm;
+	u8 resvd_0;
+	u8 antidx_anta:3;
+	u8 antidx_antb:3;
+	u8 resvd_1:2;
+}__packed;
 
+#endif
 struct rx_fwinfo_8821ae {
 	u8 gain_trsw[4];
 	u8 pwdb_all;

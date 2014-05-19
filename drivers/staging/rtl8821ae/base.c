@@ -843,7 +843,6 @@ static void _rtl_query_bandwidth_mode(struct ieee80211_hw *hw,
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_mac *mac = rtl_mac(rtl_priv(hw));
-	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
 
 	tcb_desc->packet_bw = 0;
 	if (!sta)
@@ -868,8 +867,8 @@ static void _rtl_query_bandwidth_mode(struct ieee80211_hw *hw,
 	tcb_desc->packet_bw = HT_CHANNEL_WIDTH_20_40;
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
-	if (rtlhal->hw_type == HARDWARE_TYPE_RTL8812AE 
-		|| rtlhal->hw_type == HARDWARE_TYPE_RTL8821AE) {
+	if (rtlpriv->rtlhal.hw_type == HARDWARE_TYPE_RTL8812AE ||
+	    rtlpriv->rtlhal.hw_type == HARDWARE_TYPE_RTL8821AE) {
 		if (mac->opmode == NL80211_IFTYPE_AP ||
 		mac->opmode == NL80211_IFTYPE_ADHOC ||
 		mac->opmode == NL80211_IFTYPE_MESH_POINT) {
@@ -886,6 +885,7 @@ static void _rtl_query_bandwidth_mode(struct ieee80211_hw *hw,
 #endif
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
 static u8 _rtl_get_vht_highest_n_rate(struct ieee80211_hw *hw, 
 				  struct ieee80211_sta *sta)
 {
@@ -893,7 +893,6 @@ static u8 _rtl_get_vht_highest_n_rate(struct ieee80211_hw *hw,
 	struct rtl_phy *rtlphy = &(rtlpriv->phy);
 	u8 hw_rate;
 	
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
 	if ((get_rf_type(rtlphy) == RF_2T2R) && (sta->vht_cap.vht_mcs.tx_mcs_map 
 		& 0x000c) != 0x000c0) {
 		if ((sta->vht_cap.vht_mcs.tx_mcs_map & 0x000c) >> 2 == 
@@ -920,11 +919,10 @@ static u8 _rtl_get_vht_highest_n_rate(struct ieee80211_hw *hw,
 			hw_rate = 
 			rtlpriv->cfg->maps[RTL_RC_VHT_RATE_1SS_MCS9];
 	}
-#endif
 
 	return hw_rate;
 }
-
+#endif
 
 static u8 _rtl_get_highest_n_rate(struct ieee80211_hw *hw, 
 				  struct ieee80211_sta *sta)

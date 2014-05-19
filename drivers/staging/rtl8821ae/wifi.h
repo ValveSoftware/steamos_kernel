@@ -373,6 +373,7 @@ enum hw_variables {
 	HW_VAR_H2C_FW_MEDIASTATUSRPT,
 	HW_VAR_H2C_FW_P2P_PS_OFFLOAD,
 	HW_VAR_FW_PSMODE_STATUS,
+	HW_VAR_INIT_RTS_RATE,
 	HW_VAR_RESUME_CLK_ON,
 	HW_VAR_FW_LPS_ACTION,
 	HW_VAR_1X1_RECV_COMBINE,
@@ -1236,11 +1237,16 @@ struct rtl_mac {
 	/*RDG*/
 	bool rdg_en;
 
+	u8 ht_stbc_cap;
+	u8 ht_cur_stbc;
+	
 	/*vht support*/
 	u8 vht_enable;
 	u8 bw_80;
-	bool b_vht_ldpc_rx;
-	bool b_vht_stbc_rx;
+	u8 vht_cur_ldpc;
+	u8 vht_cur_stbc;
+	u8 vht_stbc_cap;
+	u8 vht_ldpc_cap;
 
 	/*AP*/
 	u8 bssid[6];
@@ -1293,6 +1299,17 @@ struct rtl_hal {
 	u32 version;		/*version of chip */
 	u8 state;		/*stop 0, start 1 */
 	u8 boad_type;
+
+	u8 pa_mode;
+	u8 pa_type_2g;
+	u8 pa_type_5g;
+	u8 lna_type_2g;
+	u8 lna_type_5g;
+	u8 external_pa_2g;
+	u8 external_lna_2g;
+	u8 external_pa_5g;
+	u8 external_lna_5g;	
+	u8 rfe_type;
 
 	/*firmware */
 	u32 fwsize;
@@ -1580,6 +1597,8 @@ struct rtl_dm {
 
 	u64 last_tx_ok_cnt;
 	u64 last_rx_ok_cnt;
+
+	bool cck_high_power;
 };
 
 #define	EFUSE_MAX_LOGICAL_SIZE		256
@@ -2567,6 +2586,28 @@ Set subfield of little-endian 4-byte value to specified value.	*/
 	(des)[2]=(src)[2],(des)[3]=(src)[3],\
 	(des)[4]=(src)[4],(des)[5]=(src)[5])
 
+#define	LDPC_HT_ENABLE_RX			BIT(0)
+#define	LDPC_HT_ENABLE_TX			BIT(1)
+#define	LDPC_HT_TEST_TX_ENABLE			BIT(2)
+#define	LDPC_HT_CAP_TX				BIT(3)
+
+#define	STBC_HT_ENABLE_RX			BIT(0)
+#define	STBC_HT_ENABLE_TX			BIT(1)
+#define	STBC_HT_TEST_TX_ENABLE			BIT(2)
+#define	STBC_HT_CAP_TX				BIT(3)
+
+
+#define	LDPC_VHT_ENABLE_RX			BIT(0)
+#define	LDPC_VHT_ENABLE_TX			BIT(1)
+#define	LDPC_VHT_TEST_TX_ENABLE			BIT(2)
+#define	LDPC_VHT_CAP_TX				BIT(3)
+
+#define	STBC_VHT_ENABLE_RX			BIT(0)
+#define	STBC_VHT_ENABLE_TX			BIT(1)
+#define	STBC_VHT_TEST_TX_ENABLE			BIT(2)
+#define	STBC_VHT_CAP_TX				BIT(3)
+
+
 static inline u8 rtl_read_byte(struct rtl_priv *rtlpriv, u32 addr)
 {
 	return rtlpriv->io.read8_sync(rtlpriv, addr);
@@ -2584,8 +2625,6 @@ static inline u32 rtl_read_dword(struct rtl_priv *rtlpriv, u32 addr)
 
 static inline void rtl_write_byte(struct rtl_priv *rtlpriv, u32 addr, u8 val8)
 {
-//	printk("Write: 0x%lx 0x%lx\n", addr, val8);
-
 	rtlpriv->io.write8_async(rtlpriv, addr, val8);
 
 	if (rtlpriv->cfg->write_readback)
@@ -2594,7 +2633,6 @@ static inline void rtl_write_byte(struct rtl_priv *rtlpriv, u32 addr, u8 val8)
 
 static inline void rtl_write_word(struct rtl_priv *rtlpriv, u32 addr, u16 val16)
 {
-//	printk("Write: 0x%lx 0x%lx\n", addr, val16);
 	rtlpriv->io.write16_async(rtlpriv, addr, val16);
 
 	if (rtlpriv->cfg->write_readback)
@@ -2604,8 +2642,6 @@ static inline void rtl_write_word(struct rtl_priv *rtlpriv, u32 addr, u16 val16)
 static inline void rtl_write_dword(struct rtl_priv *rtlpriv,
 				   u32 addr, u32 val32)
 {
-//	printk("Write: 0x%lx 0x%lx\n", addr, val32);
-
 	rtlpriv->io.write32_async(rtlpriv, addr, val32);
 
 	if (rtlpriv->cfg->write_readback)

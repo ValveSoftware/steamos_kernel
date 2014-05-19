@@ -652,8 +652,6 @@ void halbtc_set_rfreg(void *bt_context, u8 rf_path, u32 reg_addr,
 	struct btc_coexist *btcoexist = (struct btc_coexist *)bt_context;
 	struct rtl_priv *rtlpriv = btcoexist->adapter;
 
-	printk("SetRF: 0x%lx 0x%lx\n", reg_addr, data);
-
 	rtl_set_rfreg(rtlpriv->mac80211.hw, rf_path, reg_addr, bit_mask, data);
 }
 

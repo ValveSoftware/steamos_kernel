@@ -211,7 +211,7 @@
 
 #define DM_DIG_FA_UPPER				0x3e
 #define DM_DIG_FA_LOWER				0x1e
-#define DM_DIG_FA_TH0				0x200
+#define DM_DIG_FA_TH0				200
 #define DM_DIG_FA_TH1				0x300
 #define DM_DIG_FA_TH2				0x400
 

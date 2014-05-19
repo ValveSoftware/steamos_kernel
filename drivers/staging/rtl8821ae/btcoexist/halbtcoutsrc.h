@@ -98,6 +98,7 @@ extern u32 btc_dbg_type[];
 		}						\
 	} while(0)
 */
+
 #define	BTC_PRINT_F(dbgtype, dbgflag, printstr, ...)		\
 	do {							\
 		if (unlikely(btc_dbg_type[dbgtype] & dbgflag)) {\

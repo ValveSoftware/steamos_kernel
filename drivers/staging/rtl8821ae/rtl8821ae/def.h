@@ -301,7 +301,17 @@ enum vht_data_sc{
 #define IS_VENDOR_8821A_B_CUT(version)		((IS_8821_SERIES(version)) ? \
 												((GET_CVID_CUT_VERSION(version) == B_CUT_VERSION) ? \
 												true : false) : false)
-
+enum board_type {
+	ODM_BOARD_DEFAULT = 0,	  /* The DEFAULT case. */
+	ODM_BOARD_MINICARD = BIT(0), /* 0 = non-mini card, 1 = mini card. */
+	ODM_BOARD_SLIM = BIT(1), /* 0 = non-slim card, 1 = slim card */
+	ODM_BOARD_BT = BIT(2), /* 0 = without BT card, 1 = with BT */
+	ODM_BOARD_EXT_PA = BIT(3), /* 1 = existing 2G ext-PA */
+	ODM_BOARD_EXT_LNA = BIT(4), /* 1 = existing 2G ext-LNA */
+	ODM_BOARD_EXT_TRSW = BIT(5), /* 1 = existing ext-TRSW */
+	ODM_BOARD_EXT_PA_5G = BIT(6), /* 1 = existing 5G ext-PA */
+	ODM_BOARD_EXT_LNA_5G = BIT(7), /* 1 = existing 5G ext-LNA */
+};
 
 enum rf_optype {
 	RF_OP_BY_SW_3WIRE = 0,
