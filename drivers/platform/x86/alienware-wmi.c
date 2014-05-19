@@ -1,7 +1,7 @@
 /*
  * Alienware AlienFX control
  *
- * Copyright (C) 2014 Dell Inc <mario_limonciello@xxxxxxxx>
+ * Copyright (C) 2014 Dell Inc <mario_limonciello@dell.com>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -24,265 +24,456 @@
 #include <linux/acpi.h>
 #include <linux/leds.h>
 
-MODULE_AUTHOR("Mario Limonciello <mario_limonciello@xxxxxxxx>");
+#define LEGACY_CONTROL_GUID		"A90597CE-A997-11DA-B012-B622A1EF5492"
+#define LEGACY_POWER_CONTROL_GUID	"A80593CE-A997-11DA-B012-B622A1EF5492"
+#define WMAX_CONTROL_GUID		"A70591CE-A997-11DA-B012-B622A1EF5492"
+
+#define WMAX_METHOD_HDMI_SOURCE		0x1
+#define WMAX_METHOD_HDMI_STATUS		0x2
+#define WMAX_METHOD_BRIGHTNESS		0x3
+#define WMAX_METHOD_ZONE_CONTROL	0x4
+
+MODULE_AUTHOR("Mario Limonciello <mario_limonciello@dell.com>");
 MODULE_DESCRIPTION("Alienware special feature control");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("wmi:" LEGACY_CONTROL_GUID);
+MODULE_ALIAS("wmi:" WMAX_CONTROL_GUID);
 
-static struct platform_driver platform_driver = {
-	.driver = {
-		.name = "alienware-wmi",
-		.owner = THIS_MODULE,
-	}
+enum INTERFACE_FLAGS {
+	LEGACY,
+	WMAX,
 };
 
-static struct platform_device *platform_device;
+enum LEGACY_CONTROL_STATES {
+	LEGACY_RUNNING = 1,
+	LEGACY_BOOTING = 0,
+	LEGACY_SUSPEND = 3,
+};
 
-static const struct dmi_system_id alienware_device_table[] __initconst = {
+enum WMAX_CONTROL_STATES {
+	WMAX_RUNNING = 0xFF,
+	WMAX_BOOTING = 0,
+	WMAX_SUSPEND = 3,
+};
+
+struct quirk_entry {
+	u8 num_zones;
+};
+
+static struct quirk_entry *quirks;
+
+static struct quirk_entry quirk_unknown = {
+	.num_zones = 2,
+};
+
+static struct quirk_entry quirk_x51_family = {
+	.num_zones = 3,
+};
+
+static int dmi_matched(const struct dmi_system_id *dmi)
+{
+	quirks = dmi->driver_data;
+	return 1;
+}
+
+static struct dmi_system_id alienware_quirks[] = {
 	{
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "TBD"),
-		},
-	},
+	 .callback = dmi_matched,
+	 .ident = "Alienware X51 R1",
+	 .matches = {
+		     DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
+		     DMI_MATCH(DMI_PRODUCT_NAME, "Alienware X51"),
+		     },
+	 .driver_data = &quirk_x51_family,
+	 },
+	{
+	 .callback = dmi_matched,
+	 .ident = "Alienware X51 R2",
+	 .matches = {
+		     DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
+		     DMI_MATCH(DMI_PRODUCT_NAME, "Alienware X51 R2"),
+		     },
+	 .driver_data = &quirk_x51_family,
+	 },
 	{}
-};
-
-MODULE_DEVICE_TABLE(dmi, alienware_device_table);
-
-#define RUNNING_CONTROL_GUID		"A90597CE-A997-11DA-B012-B622A1EF5492"
-#define POWERSTATE_CONTROL_GUID		"A80593CE-A997-11DA-B012-B622A1EF5492"
-#define HDMI_TOGGLE_GUID		"TBD"
-#define HDMI_MUX_GUID			"TBD"
-
-MODULE_ALIAS("wmi:" RUNNING_CONTROL_GUID);
-
-/*
-  Lighting Zone control groups
-*/
-
-#define ALIENWARE_HEAD_ZONE	1
-#define ALIENWARE_LEFT_ZONE	2
-#define ALIENWARE_RIGHT_ZONE	3
-
-enum LIGHTING_CONTROL_STATE {
-	RUNNING = 1,
-	BOOTING = 0,
-	SUSPEND = 3,
 };
 
 struct color_platform {
 	u8 blue;
 	u8 green;
 	u8 red;
-	u8 brightness;
 } __packed;
 
 struct platform_zone {
-	struct color_platform colors;
 	u8 location;
+	struct device_attribute *attr;
+	struct color_platform colors;
 };
 
-static struct platform_zone head = {
-	.location = ALIENWARE_HEAD_ZONE,
+struct wmax_brightness_args {
+	u32 led_mask;
+	u32 percentage;
 };
 
-static struct platform_zone left = {
-	.location = ALIENWARE_LEFT_ZONE,
+struct hdmi_args {
+	u8 arg;
 };
 
-static struct platform_zone right = {
-	.location = ALIENWARE_RIGHT_ZONE,
+struct legacy_led_args {
+	struct color_platform colors;
+	u8 brightness;
+	u8 state;
+} __packed;
+
+struct wmax_led_args {
+	u32 led_mask;
+	struct color_platform colors;
+	u8 state;
+} __packed;
+
+static struct platform_device *platform_device;
+static struct device_attribute *zone_dev_attrs;
+static struct attribute **zone_attrs;
+static struct platform_zone *zone_data;
+
+static struct platform_driver platform_driver = {
+	.driver = {
+		   .name = "alienware-wmi",
+		   .owner = THIS_MODULE,
+		   }
 };
 
-static void update_leds(u8 lighting_state, struct platform_zone zone)
+static struct attribute_group zone_attribute_group = {
+	.name = "rgb_zones",
+};
+
+static u8 interface;
+static u8 lighting_control_state;
+static u8 global_brightness;
+
+/*
+ * Helpers used for zone control
+*/
+static int parse_rgb(const char *buf, struct platform_zone *zone)
 {
-	acpi_status status;
-	char *guid;
-	struct acpi_buffer input;
-	struct platform_zone args;
-	if (lighting_state == BOOTING || lighting_state == SUSPEND) {
-		guid = POWERSTATE_CONTROL_GUID;
-		args.colors = zone.colors;
-		args.location = lighting_state;
-		input.length = (acpi_size) sizeof(args);
-		input.pointer = &args;
-	} else {
-		guid = RUNNING_CONTROL_GUID;
-		input.length = (acpi_size) sizeof(zone.colors);
-		input.pointer = &zone.colors;
-	}
-	pr_debug("alienware-wmi: evaluate [ guid %s | zone %d ]\n",
-		guid, zone.location);
+	long unsigned int rgb;
+	int ret;
+	union color_union {
+		struct color_platform cp;
+		int package;
+	} repackager;
 
-	status = wmi_evaluate_method(guid, 1, zone.location, &input, NULL);
-	if (ACPI_FAILURE(status))
-		pr_err("alienware-wmi: zone set failure: %u\n", status);
-}
+	ret = kstrtoul(buf, 16, &rgb);
+	if (ret)
+		return ret;
 
-#define ALIEN_CREATE_LED_DEVICE(_state, _zone, _color)			\
-	static void _state##_##_zone##_##_color##_set(			\
-	struct led_classdev *led_cdev, enum led_brightness value)	\
-	{								\
-		_zone.colors._color = value;				\
-		update_leds(_state, _zone);				\
-	}								\
-									\
-	static struct led_classdev _state##_##_zone##_##_color##_led = {\
-		.brightness_set = _state##_##_zone##_##_color##_set,	\
-		.name = __stringify(alienware_wmi::_state##_##_zone##_##_color),\
-	};								\
+	/* RGB triplet notation is 24-bit hexadecimal */
+	if (rgb > 0xFFFFFF)
+		return -EINVAL;
 
-
-ALIEN_CREATE_LED_DEVICE(RUNNING, head, blue);
-ALIEN_CREATE_LED_DEVICE(RUNNING, head, red);
-ALIEN_CREATE_LED_DEVICE(RUNNING, head, green);
-ALIEN_CREATE_LED_DEVICE(RUNNING, head, brightness);
-ALIEN_CREATE_LED_DEVICE(RUNNING, left, blue);
-ALIEN_CREATE_LED_DEVICE(RUNNING, left, red);
-ALIEN_CREATE_LED_DEVICE(RUNNING, left, green);
-ALIEN_CREATE_LED_DEVICE(RUNNING, left, brightness);
-ALIEN_CREATE_LED_DEVICE(RUNNING, right, blue);
-ALIEN_CREATE_LED_DEVICE(RUNNING, right, red);
-ALIEN_CREATE_LED_DEVICE(RUNNING, right, green);
-ALIEN_CREATE_LED_DEVICE(RUNNING, right, brightness);
-
-ALIEN_CREATE_LED_DEVICE(BOOTING, head, blue);
-ALIEN_CREATE_LED_DEVICE(BOOTING, head, red);
-ALIEN_CREATE_LED_DEVICE(BOOTING, head, green);
-ALIEN_CREATE_LED_DEVICE(BOOTING, head, brightness);
-ALIEN_CREATE_LED_DEVICE(BOOTING, left, blue);
-ALIEN_CREATE_LED_DEVICE(BOOTING, left, red);
-ALIEN_CREATE_LED_DEVICE(BOOTING, left, green);
-ALIEN_CREATE_LED_DEVICE(BOOTING, left, brightness);
-ALIEN_CREATE_LED_DEVICE(BOOTING, right, blue);
-ALIEN_CREATE_LED_DEVICE(BOOTING, right, red);
-ALIEN_CREATE_LED_DEVICE(BOOTING, right, green);
-ALIEN_CREATE_LED_DEVICE(BOOTING, right, brightness);
-
-ALIEN_CREATE_LED_DEVICE(SUSPEND, head, blue);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, head, red);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, head, green);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, head, brightness);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, left, blue);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, left, red);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, left, green);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, left, brightness);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, right, blue);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, right, red);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, right, green);
-ALIEN_CREATE_LED_DEVICE(SUSPEND, right, brightness);
-
-
-static int alienware_zone_init(struct device *dev)
-{
-	led_classdev_register(dev, &RUNNING_head_blue_led);
-	led_classdev_register(dev, &RUNNING_head_red_led);
-	led_classdev_register(dev, &RUNNING_head_green_led);
-	led_classdev_register(dev, &RUNNING_head_brightness_led);
-	led_classdev_register(dev, &RUNNING_left_blue_led);
-	led_classdev_register(dev, &RUNNING_left_red_led);
-	led_classdev_register(dev, &RUNNING_left_green_led);
-	led_classdev_register(dev, &RUNNING_left_brightness_led);
-	led_classdev_register(dev, &RUNNING_right_blue_led);
-	led_classdev_register(dev, &RUNNING_right_red_led);
-	led_classdev_register(dev, &RUNNING_right_green_led);
-	led_classdev_register(dev, &RUNNING_right_brightness_led);
-	led_classdev_register(dev, &BOOTING_head_blue_led);
-	led_classdev_register(dev, &BOOTING_head_red_led);
-	led_classdev_register(dev, &BOOTING_head_green_led);
-	led_classdev_register(dev, &BOOTING_head_brightness_led);
-	led_classdev_register(dev, &BOOTING_left_blue_led);
-	led_classdev_register(dev, &BOOTING_left_red_led);
-	led_classdev_register(dev, &BOOTING_left_green_led);
-	led_classdev_register(dev, &BOOTING_left_brightness_led);
-	led_classdev_register(dev, &BOOTING_right_blue_led);
-	led_classdev_register(dev, &BOOTING_right_red_led);
-	led_classdev_register(dev, &BOOTING_right_green_led);
-	led_classdev_register(dev, &BOOTING_right_brightness_led);
-	led_classdev_register(dev, &SUSPEND_head_blue_led);
-	led_classdev_register(dev, &SUSPEND_head_red_led);
-	led_classdev_register(dev, &SUSPEND_head_green_led);
-	led_classdev_register(dev, &SUSPEND_head_brightness_led);
-	led_classdev_register(dev, &SUSPEND_left_blue_led);
-	led_classdev_register(dev, &SUSPEND_left_red_led);
-	led_classdev_register(dev, &SUSPEND_left_green_led);
-	led_classdev_register(dev, &SUSPEND_left_brightness_led);
-	led_classdev_register(dev, &SUSPEND_right_blue_led);
-	led_classdev_register(dev, &SUSPEND_right_red_led);
-	led_classdev_register(dev, &SUSPEND_right_green_led);
-	led_classdev_register(dev, &SUSPEND_right_brightness_led);
+	repackager.package = rgb & 0x0f0f0f0f;
+	pr_debug("alienware-wmi: r: %d g:%d b: %d\n",
+		 repackager.cp.red, repackager.cp.green, repackager.cp.blue);
+	zone->colors = repackager.cp;
 	return 0;
 }
 
-static void alienware_zone_exit(void)
+static struct platform_zone *match_zone(struct device_attribute *attr)
 {
-	led_classdev_unregister(&RUNNING_head_blue_led);
-	led_classdev_unregister(&RUNNING_head_red_led);
-	led_classdev_unregister(&RUNNING_head_green_led);
-	led_classdev_unregister(&RUNNING_head_brightness_led);
-	led_classdev_unregister(&RUNNING_left_blue_led);
-	led_classdev_unregister(&RUNNING_left_red_led);
-	led_classdev_unregister(&RUNNING_left_green_led);
-	led_classdev_unregister(&RUNNING_left_brightness_led);
-	led_classdev_unregister(&RUNNING_right_blue_led);
-	led_classdev_unregister(&RUNNING_right_red_led);
-	led_classdev_unregister(&RUNNING_right_green_led);
-	led_classdev_unregister(&RUNNING_right_brightness_led);
-	led_classdev_unregister(&BOOTING_head_blue_led);
-	led_classdev_unregister(&BOOTING_head_red_led);
-	led_classdev_unregister(&BOOTING_head_green_led);
-	led_classdev_unregister(&BOOTING_head_brightness_led);
-	led_classdev_unregister(&BOOTING_left_blue_led);
-	led_classdev_unregister(&BOOTING_left_red_led);
-	led_classdev_unregister(&BOOTING_left_green_led);
-	led_classdev_unregister(&BOOTING_left_brightness_led);
-	led_classdev_unregister(&BOOTING_right_blue_led);
-	led_classdev_unregister(&BOOTING_right_red_led);
-	led_classdev_unregister(&BOOTING_right_green_led);
-	led_classdev_unregister(&BOOTING_right_brightness_led);
-	led_classdev_unregister(&SUSPEND_head_blue_led);
-	led_classdev_unregister(&SUSPEND_head_red_led);
-	led_classdev_unregister(&SUSPEND_head_green_led);
-	led_classdev_unregister(&SUSPEND_head_brightness_led);
-	led_classdev_unregister(&SUSPEND_left_blue_led);
-	led_classdev_unregister(&SUSPEND_left_red_led);
-	led_classdev_unregister(&SUSPEND_left_green_led);
-	led_classdev_unregister(&SUSPEND_left_brightness_led);
-	led_classdev_unregister(&SUSPEND_right_blue_led);
-	led_classdev_unregister(&SUSPEND_right_red_led);
-	led_classdev_unregister(&SUSPEND_right_green_led);
-	led_classdev_unregister(&SUSPEND_right_brightness_led);
+	int i;
+	for (i = 0; i < quirks->num_zones; i++) {
+		if ((struct device_attribute *)zone_data[i].attr == attr) {
+			pr_debug("alienware-wmi: matched zone location: %d\n",
+				 zone_data[i].location);
+			return &zone_data[i];
+		}
+	}
+	return NULL;
 }
 
 /*
-  HDMI toggle control (interface and platform still TBD)
+ * Individual RGB zone control
 */
+static int alienware_update_led(struct platform_zone *zone)
+{
+	int method_id;
+	acpi_status status;
+	char *guid;
+	struct acpi_buffer input;
+	struct legacy_led_args legacy_args;
+	struct wmax_led_args wmax_args;
+	if (interface == WMAX) {
+		wmax_args.led_mask = 1 << zone->location;
+		wmax_args.colors = zone->colors;
+		wmax_args.state = lighting_control_state;
+		guid = WMAX_CONTROL_GUID;
+		method_id = WMAX_METHOD_ZONE_CONTROL;
 
+		input.length = (acpi_size) sizeof(wmax_args);
+		input.pointer = &wmax_args;
+	} else {
+		legacy_args.colors = zone->colors;
+		legacy_args.brightness = global_brightness;
+		legacy_args.state = 0;
+		if (lighting_control_state == LEGACY_BOOTING ||
+		    lighting_control_state == LEGACY_SUSPEND) {
+			guid = LEGACY_POWER_CONTROL_GUID;
+			legacy_args.state = lighting_control_state;
+		} else
+			guid = LEGACY_CONTROL_GUID;
+		method_id = zone->location + 1;
+
+		input.length = (acpi_size) sizeof(legacy_args);
+		input.pointer = &legacy_args;
+	}
+	pr_debug("alienware-wmi: guid %s method %d\n", guid, method_id);
+
+	status = wmi_evaluate_method(guid, 1, method_id, &input, NULL);
+	if (ACPI_FAILURE(status))
+		pr_err("alienware-wmi: zone set failure: %u\n", status);
+	return ACPI_FAILURE(status);
+}
+
+static ssize_t zone_show(struct device *dev, struct device_attribute *attr,
+			 char *buf)
+{
+	struct platform_zone *target_zone;
+	target_zone = match_zone(attr);
+	if (target_zone == NULL)
+		return sprintf(buf, "red: -1, green: -1, blue: -1\n");
+	return sprintf(buf, "red: %d, green: %d, blue: %d\n",
+		       target_zone->colors.red,
+		       target_zone->colors.green, target_zone->colors.blue);
+
+}
+
+static ssize_t zone_set(struct device *dev, struct device_attribute *attr,
+			const char *buf, size_t count)
+{
+	struct platform_zone *target_zone;
+	int ret;
+	target_zone = match_zone(attr);
+	if (target_zone == NULL) {
+		pr_err("alienware-wmi: invalid target zone\n");
+		return 1;
+	}
+	ret = parse_rgb(buf, target_zone);
+	if (ret)
+		return ret;
+	ret = alienware_update_led(target_zone);
+	return ret ? ret : count;
+}
+
+/*
+ * LED Brightness (Global)
+*/
+static int wmax_brightness(int brightness)
+{
+	acpi_status status;
+	struct acpi_buffer input;
+	struct wmax_brightness_args args = {
+		.led_mask = 0xFF,
+		.percentage = brightness,
+	};
+	input.length = (acpi_size) sizeof(args);
+	input.pointer = &args;
+	status = wmi_evaluate_method(WMAX_CONTROL_GUID, 1,
+				     WMAX_METHOD_BRIGHTNESS, &input, NULL);
+	if (ACPI_FAILURE(status))
+		pr_err("alienware-wmi: brightness set failure: %u\n", status);
+	return ACPI_FAILURE(status);
+}
+
+static void global_led_set(struct led_classdev *led_cdev,
+			   enum led_brightness brightness)
+{
+	int ret;
+	global_brightness = brightness;
+	if (interface == WMAX)
+		ret = wmax_brightness(brightness);
+	else
+		ret = alienware_update_led(&zone_data[0]);
+	if (ret)
+		pr_err("LED brightness update failed\n");
+}
+
+static enum led_brightness global_led_get(struct led_classdev *led_cdev)
+{
+	return global_brightness;
+}
+
+static struct led_classdev global_led = {
+	.brightness_set = global_led_set,
+	.brightness_get = global_led_get,
+	.name = "alienware::global_brightness",
+};
+
+/*
+ * Lighting control state device attribute (Global)
+*/
+static ssize_t show_control_state(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	if (lighting_control_state == LEGACY_BOOTING)
+		return scnprintf(buf, PAGE_SIZE, "[booting] running suspend\n");
+	else if (lighting_control_state == LEGACY_SUSPEND)
+		return scnprintf(buf, PAGE_SIZE, "booting running [suspend]\n");
+	return scnprintf(buf, PAGE_SIZE, "booting [running] suspend\n");
+}
+
+static ssize_t store_control_state(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	long unsigned int val;
+	if (strcmp(buf, "booting\n") == 0)
+		val = LEGACY_BOOTING;
+	else if (strcmp(buf, "suspend\n") == 0)
+		val = LEGACY_SUSPEND;
+	else if (interface == LEGACY)
+		val = LEGACY_RUNNING;
+	else
+		val = WMAX_RUNNING;
+	lighting_control_state = val;
+	pr_debug("alienware-wmi: updated control state to %d\n",
+		 lighting_control_state);
+	return count;
+}
+
+static DEVICE_ATTR(lighting_control_state, 0644, show_control_state,
+		   store_control_state);
+
+static int alienware_zone_init(struct platform_device *dev)
+{
+	int i;
+	char buffer[10];
+	char *name;
+
+	if (interface == WMAX) {
+		global_led.max_brightness = 100;
+		lighting_control_state = WMAX_RUNNING;
+	} else if (interface == LEGACY) {
+		global_led.max_brightness = 0x0F;
+		lighting_control_state = LEGACY_RUNNING;
+	}
+	global_brightness = global_led.max_brightness;
+
+	/*
+	 *      - zone_dev_attrs num_zones + 1 is for individual zones and then
+	 *        null terminated
+	 *      - zone_attrs num_zones + 2 is for all attrs in zone_dev_attrs +
+	 *        the lighting control + null terminated
+	 *      - zone_data num_zones is for the distinct zones
+	 */
+	zone_dev_attrs =
+	    kzalloc(sizeof(struct device_attribute) * (quirks->num_zones + 1),
+		    GFP_KERNEL);
+	if (!zone_dev_attrs)
+		return -ENOMEM;
+
+	zone_attrs =
+	    kzalloc(sizeof(struct attribute *) * (quirks->num_zones + 2),
+		    GFP_KERNEL);
+	if (!zone_attrs)
+		return -ENOMEM;
+
+	zone_data =
+	    kzalloc(sizeof(struct platform_zone) * (quirks->num_zones),
+		    GFP_KERNEL);
+	if (!zone_data)
+		return -ENOMEM;
+
+	for (i = 0; i < quirks->num_zones; i++) {
+		sprintf(buffer, "zone%02X", i);
+		name = kstrdup(buffer, GFP_KERNEL);
+		if (name == NULL)
+			return 1;
+		sysfs_attr_init(&zone_dev_attrs[i].attr);
+		zone_dev_attrs[i].attr.name = name;
+		zone_dev_attrs[i].attr.mode = 0644;
+		zone_dev_attrs[i].show = zone_show;
+		zone_dev_attrs[i].store = zone_set;
+		zone_data[i].location = i;
+		zone_attrs[i] = &zone_dev_attrs[i].attr;
+		zone_data[i].attr = &zone_dev_attrs[i];
+	}
+	zone_attrs[quirks->num_zones] = &dev_attr_lighting_control_state.attr;
+	zone_attribute_group.attrs = zone_attrs;
+
+	led_classdev_register(&dev->dev, &global_led);
+
+	return sysfs_create_group(&dev->dev.kobj, &zone_attribute_group);
+}
+
+static void alienware_zone_exit(struct platform_device *dev)
+{
+	sysfs_remove_group(&dev->dev.kobj, &zone_attribute_group);
+	led_classdev_unregister(&global_led);
+	if (zone_dev_attrs) {
+		int i;
+		for (i = 0; i < quirks->num_zones; i++)
+			kfree(zone_dev_attrs[i].attr.name);
+	}
+	kfree(zone_dev_attrs);
+	kfree(zone_data);
+	kfree(zone_attrs);
+}
+
+/*
+	The HDMI mux sysfs node indicates the status of the HDMI input mux.
+	It can toggle between standard system GPU output and HDMI input.
+*/
 static ssize_t show_hdmi(struct device *dev, struct device_attribute *attr,
 			 char *buf)
 {
 	acpi_status status;
-	status = wmi_evaluate_method(HDMI_MUX_GUID, 1, 3, NULL, NULL);
-	if (status == 1) {
-		sprintf(buf, "hdmi-i\n");
-		return 0;
-	} else if (status == 2) {
-		sprintf(buf, "gpu\n");
-		return 0;
+	struct acpi_buffer input;
+	union acpi_object *obj;
+	u32 tmp = 0;
+	struct acpi_buffer output = { ACPI_ALLOCATE_BUFFER, NULL };
+	struct hdmi_args in_args = {
+		.arg = 0,
+	};
+	input.length = (acpi_size) sizeof(in_args);
+	input.pointer = &in_args;
+	status = wmi_evaluate_method(WMAX_CONTROL_GUID, 1,
+				     WMAX_METHOD_HDMI_STATUS, &input, &output);
+
+	if (ACPI_SUCCESS(status)) {
+		obj = (union acpi_object *)output.pointer;
+		if (obj && obj->type == ACPI_TYPE_INTEGER)
+			tmp = (u32) obj->integer.value;
+		if (tmp == 1)
+			return scnprintf(buf, PAGE_SIZE,
+					 "[input] gpu unknown\n");
+		else if (tmp == 2)
+			return scnprintf(buf, PAGE_SIZE,
+					 "input [gpu] unknown\n");
 	}
-	sprintf(buf, "error reading mux\n");
-	pr_err("alienware-wmi: HDMI mux read failed: results: %u\n", status);
-	return status;
+	pr_err("alienware-wmi: unknown HDMI status: %d\n", status);
+	return scnprintf(buf, PAGE_SIZE, "input gpu [unknown]\n");
 }
 
 static ssize_t toggle_hdmi(struct device *dev, struct device_attribute *attr,
 			   const char *buf, size_t count)
 {
+	struct acpi_buffer input;
 	acpi_status status;
-	status = wmi_evaluate_method(HDMI_TOGGLE_GUID, 1, 3, NULL, NULL);
+	struct hdmi_args args;
+	if (strcmp(buf, "gpu\n") == 0)
+		args.arg = 1;
+	else if (strcmp(buf, "input\n") == 0)
+		args.arg = 2;
+	else
+		args.arg = 3;
+	pr_debug("alienware-wmi: setting hdmi to %d : %s", args.arg, buf);
+	input.length = (acpi_size) sizeof(args);
+	input.pointer = &args;
+	status = wmi_evaluate_method(WMAX_CONTROL_GUID, 1,
+				     WMAX_METHOD_HDMI_SOURCE, &input, NULL);
 	if (ACPI_FAILURE(status))
 		pr_err("alienware-wmi: HDMI toggle failed: results: %u\n",
-			   status);
+		       status);
 	return count;
 }
 
@@ -296,7 +487,6 @@ static void remove_hdmi(struct platform_device *device)
 static int create_hdmi(void)
 {
 	int ret = -ENOMEM;
-
 	ret = device_create_file(&platform_device->dev, &dev_attr_hdmi);
 	if (ret)
 		goto error_create_hdmi;
@@ -311,10 +501,18 @@ static int __init alienware_wmi_init(void)
 {
 	int ret;
 
-	if (!wmi_has_guid(RUNNING_CONTROL_GUID)) {
-		pr_warn("No known WMI GUID found\n");
+	if (wmi_has_guid(LEGACY_CONTROL_GUID))
+		interface = LEGACY;
+	else if (wmi_has_guid(WMAX_CONTROL_GUID))
+		interface = WMAX;
+	else {
+		pr_warn("alienware-wmi: No known WMI GUID found\n");
 		return -ENODEV;
 	}
+
+	dmi_check_system(alienware_quirks);
+	if (quirks == NULL)
+		quirks = &quirk_unknown;
 
 	ret = platform_driver_register(&platform_driver);
 	if (ret)
@@ -328,28 +526,20 @@ static int __init alienware_wmi_init(void)
 	if (ret)
 		goto fail_platform_device2;
 
-	/*
-		No systems with HDMI-i yet, for later.
-		might make this a WMI check at that time.
-	*/
-	if (dmi_check_system(alienware_device_table)) {
+	if (interface == WMAX) {
 		ret = create_hdmi();
 		if (ret)
 			goto fail_prep_hdmi;
 	}
-	/*
-		Only present on AW platforms w/o MCU.
-	*/
-	if (wmi_has_guid(RUNNING_CONTROL_GUID)) {
-		ret = alienware_zone_init(&platform_device->dev);
-		if (ret)
-			goto fail_prep_zones;
-	}
+
+	ret = alienware_zone_init(platform_device);
+	if (ret)
+		goto fail_prep_zones;
 
 	return 0;
 
 fail_prep_zones:
-	alienware_zone_exit();
+	alienware_zone_exit(platform_device);
 fail_prep_hdmi:
 	platform_device_del(platform_device);
 fail_platform_device2:
@@ -364,12 +554,13 @@ module_init(alienware_wmi_init);
 
 static void __exit alienware_wmi_exit(void)
 {
-	alienware_zone_exit();
-	remove_hdmi(platform_device);
 	if (platform_device) {
+		alienware_zone_exit(platform_device);
+		remove_hdmi(platform_device);
 		platform_device_unregister(platform_device);
 		platform_driver_unregister(&platform_driver);
 	}
 }
 
 module_exit(alienware_wmi_exit);
+
