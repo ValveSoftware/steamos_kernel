@@ -38,7 +38,7 @@ static DEFINE_PCI_DEVICE_TABLE(pciidlist) = {
 	{0,}
 };
 
-MODULE_DEVICE_TABLE(pci, pciidlist);
+/*MODULE_DEVICE_TABLE(pci, pciidlist);*/
 
 static void mgag200_kick_out_firmware_fb(struct pci_dev *pdev)
 {

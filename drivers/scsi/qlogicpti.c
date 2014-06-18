@@ -475,11 +475,8 @@ static int qlogicpti_load_firmware(struct qlogicpti *qpti)
 	int i, timeout;
 
 	err = request_firmware(&fw, fwname, &qpti->op->dev);
-	if (err) {
-		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
-		       fwname, err);
+	if (err)
 		return err;
-	}
 	if (fw->size % 2) {
 		printk(KERN_ERR "Bogus length %zu in image \"%s\"\n",
 		       fw->size, fwname);

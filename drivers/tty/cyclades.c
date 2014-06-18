@@ -3520,10 +3520,8 @@ static int cyz_load_fw(struct pci_dev *pdev, void __iomem *base_addr,
 	int retval;
 
 	retval = request_firmware(&fw, "cyzfirm.bin", &pdev->dev);
-	if (retval) {
-		dev_err(&pdev->dev, "can't get firmware\n");
+	if (retval)
 		goto err;
-	}
 
 	/* Check whether the firmware is already loaded and running. If
 	   positive, skip this board */

@@ -1248,10 +1248,8 @@ static int fm_download_firmware(struct fmdev *fmdev, const u8 *fw_name)
 
 	ret = request_firmware(&fw_entry, fw_name,
 				&fmdev->radio_dev->dev);
-	if (ret < 0) {
-		fmerr("Unable to read firmware(%s) content\n", fw_name);
+	if (ret)
 		return ret;
-	}
 	fmdbg("Firmware(%s) length : %d bytes\n", fw_name, fw_entry->size);
 
 	fw_data = (void *)fw_entry->data;

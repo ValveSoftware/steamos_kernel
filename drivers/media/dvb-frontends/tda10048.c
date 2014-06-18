@@ -495,8 +495,6 @@ static int tda10048_firmware_upload(struct dvb_frontend *fe)
 	ret = request_firmware(&fw, TDA10048_DEFAULT_FIRMWARE,
 		state->i2c->dev.parent);
 	if (ret) {
-		printk(KERN_ERR "%s: Upload failed. (file not found?)\n",
-			__func__);
 		return -EIO;
 	} else {
 		printk(KERN_INFO "%s: firmware read %Zu bytes.\n",

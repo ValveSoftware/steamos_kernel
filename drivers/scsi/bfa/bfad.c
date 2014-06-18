@@ -1803,7 +1803,6 @@ bfad_read_firmware(struct pci_dev *pdev, u32 **bfi_image,
 	const struct firmware *fw;
 
 	if (request_firmware(&fw, fw_name, &pdev->dev)) {
-		printk(KERN_ALERT "Can't locate firmware %s\n", fw_name);
 		*bfi_image = NULL;
 		goto out;
 	}

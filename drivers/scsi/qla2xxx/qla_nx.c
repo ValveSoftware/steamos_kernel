@@ -2441,11 +2441,8 @@ try_blob_fw:
 
 	/* Load firmware blob. */
 	blob = ha->hablob = qla2x00_request_firmware(vha);
-	if (!blob) {
-		ql_log(ql_log_fatal, vha, 0x00a3,
-		    "Firmware image not present.\n");
+	if (!blob)
 		goto fw_load_failed;
-	}
 
 	/* Validating firmware blob */
 	if (qla82xx_validate_firmware_blob(vha,

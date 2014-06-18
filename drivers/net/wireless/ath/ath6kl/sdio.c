@@ -80,17 +80,6 @@ static inline struct ath6kl_sdio *ath6kl_sdio_priv(struct ath6kl *ar)
 	return ar->hif_priv;
 }
 
-/*
- * Macro to check if DMA buffer is WORD-aligned and DMA-able.
- * Most host controllers assume the buffer is DMA'able and will
- * bug-check otherwise (i.e. buffers on the stack). virt_addr_valid
- * check fails on stack memory.
- */
-static inline bool buf_needs_bounce(u8 *buf)
-{
-	return ((unsigned long) buf & 0x3) || !virt_addr_valid(buf);
-}
-
 static void ath6kl_sdio_set_mbox_info(struct ath6kl *ar)
 {
 	struct ath6kl_mbox_info *mbox_info = &ar->mbox_info;
@@ -404,8 +393,8 @@ static int ath6kl_sdio_alloc_prep_scat_req(struct ath6kl_sdio *ar_sdio,
 	return 0;
 }
 
-static int ath6kl_sdio_read_write_sync(struct ath6kl *ar, u32 addr, u8 *buf,
-				       u32 len, u32 request)
+static int __ath6kl_sdio_read_write_sync(struct ath6kl *ar, u32 addr, u8 *buf,
+					 u32 len, u32 request, bool may_dma)
 {
 	struct ath6kl_sdio *ar_sdio = ath6kl_sdio_priv(ar);
 	u8  *tbuf = NULL;
@@ -415,7 +404,10 @@ static int ath6kl_sdio_read_write_sync(struct ath6kl *ar, u32 addr, u8 *buf,
 	if (request & HIF_BLOCK_BASIS)
 		len = round_down(len, HIF_MBOX_BLOCK_SIZE);
 
-	if (buf_needs_bounce(buf)) {
+	/* Most host controllers assume the buffer is DMA'able. We
+	 * must use a bounce buffer if it isn't.
+	 */
+	if ((unsigned long) buf & 0x3 || !may_dma) {
 		if (!ar_sdio->dma_buffer)
 			return -ENOMEM;
 		mutex_lock(&ar_sdio->dma_buffer_mutex);
@@ -438,6 +430,13 @@ static int ath6kl_sdio_read_write_sync(struct ath6kl *ar, u32 addr, u8 *buf,
 	return ret;
 }
 
+static int ath6kl_sdio_read_write_sync(struct ath6kl *ar, u32 addr, u8 *buf,
+				       u32 len, u32 request)
+{
+	return __ath6kl_sdio_read_write_sync(ar, addr, buf, len, request,
+					     false);
+}
+
 static void __ath6kl_sdio_write_async(struct ath6kl_sdio *ar_sdio,
 				      struct bus_request *req)
 {
@@ -447,9 +446,9 @@ static void __ath6kl_sdio_write_async(struct ath6kl_sdio *ar_sdio,
 		void *context;
 		int status;
 
-		status = ath6kl_sdio_read_write_sync(ar_sdio->ar, req->address,
-						     req->buffer, req->length,
-						     req->request);
+		status = __ath6kl_sdio_read_write_sync(
+			ar_sdio->ar, req->address, req->buffer, req->length,
+			req->request, true);
 		context = req->packet;
 		ath6kl_sdio_free_bus_req(ar_sdio, req);
 		ath6kl_hif_rw_comp_handler(context, status);

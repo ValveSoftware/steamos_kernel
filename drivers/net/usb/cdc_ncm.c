@@ -55,11 +55,7 @@
 
 #define	DRIVER_VERSION				"14-Mar-2012"
 
-#if IS_ENABLED(CONFIG_USB_NET_CDC_MBIM)
-static bool prefer_mbim = true;
-#else
 static bool prefer_mbim;
-#endif
 module_param(prefer_mbim, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(prefer_mbim, "Prefer MBIM setting on dual NCM/MBIM functions");
 

@@ -1573,10 +1573,8 @@ static int ti_download_firmware(struct ti_device *tdev)
 		}
 		status = request_firmware(&fw_p, buf, &dev->dev);
 	}
-	if (status) {
-		dev_err(&dev->dev, "%s - firmware not found\n", __func__);
+	if (status)
 		return -ENOENT;
-	}
 	if (fw_p->size > TI_FIRMWARE_BUF_SIZE) {
 		dev_err(&dev->dev, "%s - firmware too large %zu\n", __func__, fw_p->size);
 		release_firmware(fw_p);

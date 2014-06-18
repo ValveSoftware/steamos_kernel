@@ -85,10 +85,8 @@ int cx18_av_loadfw(struct cx18 *cx)
 	int i;
 	int retries1 = 0;
 
-	if (request_firmware(&fw, FWFILE, &cx->pci_dev->dev) != 0) {
-		CX18_ERR_DEV(sd, "unable to open firmware %s\n", FWFILE);
+	if (request_firmware(&fw, FWFILE, &cx->pci_dev->dev) != 0)
 		return -EINVAL;
-	}
 
 	/* The firmware load often has byte errors, so allow for several
 	   retries, both at byte level and at the firmware load level. */

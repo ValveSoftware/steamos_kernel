@@ -1355,7 +1355,6 @@ static void load_firmware_cb(const struct firmware *fw,
 
 	tuner_dbg("request_firmware_nowait(): %s\n", fw ? "OK" : "error");
 	if (!fw) {
-		tuner_err("Could not load firmware %s.\n", priv->fname);
 		priv->state = XC2028_NODEV;
 		return;
 	}

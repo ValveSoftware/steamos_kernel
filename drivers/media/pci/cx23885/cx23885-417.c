@@ -930,14 +930,8 @@ static int cx23885_load_firmware(struct cx23885_dev *dev)
 	retval = request_firmware(&firmware, CX23885_FIRM_IMAGE_NAME,
 				  &dev->pci->dev);
 
-	if (retval != 0) {
-		printk(KERN_ERR
-			"ERROR: Hotplug firmware request failed (%s).\n",
-			CX23885_FIRM_IMAGE_NAME);
-		printk(KERN_ERR "Please fix your hotplug setup, the board will "
-			"not work without firmware loaded!\n");
+	if (retval != 0)
 		return -1;
-	}
 
 	if (firmware->size != CX23885_FIRM_IMAGE_SIZE) {
 		printk(KERN_ERR "ERROR: Firmware size mismatch "

@@ -3928,12 +3928,8 @@ static int reset_atmel_card(struct net_device *dev)
 					strcpy(priv->firmware_id, "atmel_at76c502.bin");
 				}
 				err = request_firmware(&fw_entry, priv->firmware_id, priv->sys_dev);
-				if (err != 0) {
-					printk(KERN_ALERT
-					       "%s: firmware %s is missing, cannot continue.\n",
-					       dev->name, priv->firmware_id);
+				if (err != 0)
 					return err;
-				}
 			} else {
 				int fw_index = 0;
 				int success = 0;

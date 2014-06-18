@@ -888,10 +888,8 @@ static int wm2000_i2c_probe(struct i2c_client *i2c,
 	}
 
 	ret = request_firmware(&fw, filename, &i2c->dev);
-	if (ret != 0) {
-		dev_err(&i2c->dev, "Failed to acquire ANC data: %d\n", ret);
+	if (ret != 0)
 		goto err_supplies;
-	}
 
 	/* Pre-cook the concatenation of the register address onto the image */
 	wm2000->anc_download_size = fw->size + 2;

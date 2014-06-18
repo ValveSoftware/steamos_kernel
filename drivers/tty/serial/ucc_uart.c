@@ -1176,10 +1176,8 @@ static void uart_firmware_cont(const struct firmware *fw, void *context)
 	struct device *dev = context;
 	int ret;
 
-	if (!fw) {
-		dev_err(dev, "firmware not found\n");
+	if (!fw)
 		return;
-	}
 
 	firmware = (struct qe_firmware *) fw->data;
 

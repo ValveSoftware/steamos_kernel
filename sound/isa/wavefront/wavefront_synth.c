@@ -1947,10 +1947,8 @@ wavefront_download_firmware (snd_wavefront_t *dev, char *path)
 	const struct firmware *firmware;
 
 	err = request_firmware(&firmware, path, dev->card->dev);
-	if (err < 0) {
-		snd_printk(KERN_ERR "firmware (%s) download failed!!!\n", path);
+	if (err)
 		return 1;
-	}
 
 	len = 0;
 	buf = firmware->data;

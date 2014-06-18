@@ -1089,11 +1089,8 @@ static int upgrade_fw(struct adapter *adap)
 	}
 
 	ret = request_firmware(&fw, fw_file_name, dev);
-	if (ret < 0) {
-		dev_err(dev, "unable to load firmware image %s, error %d\n",
-			fw_file_name, ret);
+	if (ret)
 		return ret;
-	}
 
 	hdr = (const struct fw_hdr *)fw->data;
 	vers = ntohl(hdr->fw_ver);

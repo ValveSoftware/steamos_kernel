@@ -392,11 +392,8 @@ setup_instance(struct sfax_hw *card)
 	card->isar.owner = THIS_MODULE;
 
 	err = request_firmware(&firmware, "isdn/ISAR.BIN", &card->pdev->dev);
-	if (err < 0) {
-		pr_info("%s: firmware request failed %d\n",
-			card->name, err);
+	if (err)
 		goto error_fw;
-	}
 	if (debug & DEBUG_HW)
 		pr_notice("%s: got firmware %zu bytes\n",
 			  card->name, firmware->size);

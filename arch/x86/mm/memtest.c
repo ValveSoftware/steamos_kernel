@@ -31,6 +31,8 @@ static u64 patterns[] __initdata = {
 
 static void __init reserve_bad_mem(u64 pattern, u64 start_bad, u64 end_bad)
 {
+	WARN_ONCE(1, "Bad RAM detected. Use memtest86+ to perform a thorough test\n"
+		  "and the memmap= parameter to reserve the bad areas.");
 	printk(KERN_INFO "  %016llx bad mem addr %010llx - %010llx reserved\n",
 	       (unsigned long long) pattern,
 	       (unsigned long long) start_bad,

@@ -8,6 +8,7 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/utsname.h>
+#include <generated/package.h>
 #include <asm/current.h>
 #include <asm/ptrace.h>
 #include <asm/sysrq.h>
@@ -16,8 +17,9 @@ void __show_regs(struct pt_regs *regs)
 {
 	printk("\n");
 	print_modules();
-	printk(KERN_INFO "Pid: %d, comm: %.20s %s %s\n", task_pid_nr(current),
-		current->comm, print_tainted(), init_utsname()->release);
+	printk(KERN_INFO "Pid: %d, comm: %.20s %s %s%s\n", task_pid_nr(current),
+		current->comm, print_tainted(), init_utsname()->release,
+		LINUX_PACKAGE_ID);
 	printk(KERN_INFO "RIP: %04lx:[<%016lx>]\n", PT_REGS_CS(regs) & 0xffff,
 	       PT_REGS_IP(regs));
 	printk(KERN_INFO "RSP: %016lx  EFLAGS: %08lx\n", PT_REGS_SP(regs),

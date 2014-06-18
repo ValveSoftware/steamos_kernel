@@ -405,10 +405,8 @@ int qib_sd7220_init(struct qib_devdata *dd)
 	}
 
 	ret = request_firmware(&fw, SD7220_FW_NAME, &dd->pcidev->dev);
-	if (ret) {
-		qib_dev_err(dd, "Failed to load IB SERDES image\n");
+	if (ret)
 		goto done;
-	}
 
 	/* Substitute our deduced value for was_reset */
 	ret = qib_ibsd_ucode_loaded(dd->pport, fw);

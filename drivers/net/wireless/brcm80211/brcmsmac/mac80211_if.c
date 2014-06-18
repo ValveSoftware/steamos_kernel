@@ -379,19 +379,13 @@ static int brcms_request_fw(struct brcms_info *wl, struct bcma_device *pdev)
 		sprintf(fw_name, "%s-%d.fw", brcms_firmwares[i],
 			UCODE_LOADER_API_VER);
 		status = request_firmware(&wl->fw.fw_bin[i], fw_name, device);
-		if (status) {
-			wiphy_err(wl->wiphy, "%s: fail to load firmware %s\n",
-				  KBUILD_MODNAME, fw_name);
+		if (status)
 			return status;
-		}
 		sprintf(fw_name, "%s_hdr-%d.fw", brcms_firmwares[i],
 			UCODE_LOADER_API_VER);
 		status = request_firmware(&wl->fw.fw_hdr[i], fw_name, device);
-		if (status) {
-			wiphy_err(wl->wiphy, "%s: fail to load firmware %s\n",
-				  KBUILD_MODNAME, fw_name);
+		if (status)
 			return status;
-		}
 		wl->fw.hdr_num_entries[i] =
 		    wl->fw.fw_hdr[i]->size / (sizeof(struct firmware_hdr));
 	}

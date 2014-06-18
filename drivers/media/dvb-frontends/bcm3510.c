@@ -635,10 +635,9 @@ static int bcm3510_download_firmware(struct dvb_frontend* fe)
 	int ret,i;
 
 	deb_info("requesting firmware\n");
-	if ((ret = st->config->request_firmware(fe, &fw, BCM3510_DEFAULT_FIRMWARE)) < 0) {
-		err("could not load firmware (%s): %d",BCM3510_DEFAULT_FIRMWARE,ret);
+	ret = st->config->request_firmware(fe, &fw, BCM3510_DEFAULT_FIRMWARE);
+	if (ret)
 		return ret;
-	}
 	deb_info("got firmware: %zd\n",fw->size);
 
 	b = fw->data;

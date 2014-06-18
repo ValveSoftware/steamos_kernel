@@ -284,10 +284,8 @@ bool init_firmware(struct net_device *dev)
 		 */
 		if(rst_opt == OPT_SYSTEM_RESET) {
 			rc = request_firmware(&fw_entry, fw_name[init_step],&priv->udev->dev);
-			if(rc < 0 ) {
-				RT_TRACE(COMP_ERR, "request firmware fail!\n");
+			if (rc)
 				goto download_firmware_fail;
-			}
 
 			if(fw_entry->size > sizeof(pfirmware->firmware_buf)) {
 				RT_TRACE(COMP_ERR, "img file size exceed the container buffer fail!\n");

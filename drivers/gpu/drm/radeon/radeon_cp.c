@@ -530,10 +530,7 @@ static int radeon_cp_init_microcode(drm_radeon_private_t *dev_priv)
 
 	err = request_firmware(&dev_priv->me_fw, fw_name, &pdev->dev);
 	platform_device_unregister(pdev);
-	if (err) {
-		printk(KERN_ERR "radeon_cp: Failed to load firmware \"%s\"\n",
-		       fw_name);
-	} else if (dev_priv->me_fw->size % 8) {
+	if (err == 0 && dev_priv->me_fw->size % 8) {
 		printk(KERN_ERR
 		       "radeon_cp: Bogus length %zu in firmware \"%s\"\n",
 		       dev_priv->me_fw->size, fw_name);

@@ -825,8 +825,6 @@ static int if_usb_prog_firmware(struct if_usb_card *cardp)
 	kparam_block_sysfs_write(fw_name);
 	ret = request_firmware(&cardp->fw, lbtf_fw_name, &cardp->udev->dev);
 	if (ret < 0) {
-		pr_err("request_firmware() failed with %#x\n", ret);
-		pr_err("firmware %s not found\n", lbtf_fw_name);
 		kparam_unblock_sysfs_write(fw_name);
 		goto done;
 	}

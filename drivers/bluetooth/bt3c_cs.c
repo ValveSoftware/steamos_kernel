@@ -585,10 +585,8 @@ static int bt3c_open(bt3c_info_t *info)
 
 	/* Load firmware */
 	err = request_firmware(&firmware, "BT3CPCC.bin", &info->p_dev->dev);
-	if (err < 0) {
-		BT_ERR("Firmware request failed");
+	if (err)
 		goto error;
-	}
 
 	err = bt3c_load_firmware(info, firmware->data, firmware->size);
 

@@ -3679,16 +3679,13 @@ static int bnx2_request_uncached_firmware(struct bnx2 *bp)
 	}
 
 	rc = request_firmware(&bp->mips_firmware, mips_fw_file, &bp->pdev->dev);
-	if (rc) {
-		pr_err("Can't load firmware file \"%s\"\n", mips_fw_file);
+	if (rc)
 		goto out;
-	}
 
 	rc = request_firmware(&bp->rv2p_firmware, rv2p_fw_file, &bp->pdev->dev);
-	if (rc) {
-		pr_err("Can't load firmware file \"%s\"\n", rv2p_fw_file);
+	if (rc)
 		goto err_release_mips_firmware;
-	}
+
 	mips_fw = (const struct bnx2_mips_fw_file *) bp->mips_firmware->data;
 	rv2p_fw = (const struct bnx2_rv2p_fw_file *) bp->rv2p_firmware->data;
 	if (bp->mips_firmware->size < sizeof(*mips_fw) ||

@@ -79,11 +79,8 @@ int mga_warp_install_microcode(drm_mga_private_t *dev_priv)
 	}
 	rc = request_ihex_firmware(&fw, firmware_name, &pdev->dev);
 	platform_device_unregister(pdev);
-	if (rc) {
-		DRM_ERROR("mga: Failed to load microcode \"%s\"\n",
-			  firmware_name);
+	if (rc)
 		return rc;
-	}
 
 	size = 0;
 	where = 0;

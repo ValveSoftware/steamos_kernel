@@ -373,7 +373,6 @@ static void load_code(struct icom_port *icom_port)
 
 	/* Load Call Setup into Adapter */
 	if (request_firmware(&fw, "icom_call_setup.bin", &dev->dev) < 0) {
-		dev_err(&dev->dev,"Unable to load icom_call_setup.bin firmware image\n");
 		status = -1;
 		goto load_code_exit;
 	}
@@ -393,7 +392,6 @@ static void load_code(struct icom_port *icom_port)
 
 	/* Load Resident DCE portion of Adapter */
 	if (request_firmware(&fw, "icom_res_dce.bin", &dev->dev) < 0) {
-		dev_err(&dev->dev,"Unable to load icom_res_dce.bin firmware image\n");
 		status = -1;
 		goto load_code_exit;
 	}
@@ -438,7 +436,6 @@ static void load_code(struct icom_port *icom_port)
 	}
 
 	if (request_firmware(&fw, "icom_asc.bin", &dev->dev) < 0) {
-		dev_err(&dev->dev,"Unable to load icom_asc.bin firmware image\n");
 		status = -1;
 		goto load_code_exit;
 	}

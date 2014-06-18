@@ -376,10 +376,6 @@ out:
 	platform_device_unregister(pdev);
 
 	if (err) {
-		if (err != -EINVAL)
-			printk(KERN_ERR
-			       "r600_cp: Failed to load firmware \"%s\"\n",
-			       fw_name);
 		release_firmware(dev_priv->pfp_fw);
 		dev_priv->pfp_fw = NULL;
 		release_firmware(dev_priv->me_fw);

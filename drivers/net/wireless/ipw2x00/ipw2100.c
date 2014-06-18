@@ -8428,12 +8428,8 @@ static int ipw2100_get_firmware(struct ipw2100_priv *priv,
 
 	rc = request_firmware(&fw->fw_entry, fw_name, &priv->pci_dev->dev);
 
-	if (rc < 0) {
-		printk(KERN_ERR DRV_NAME ": "
-		       "%s: Firmware '%s' not available or load failed.\n",
-		       priv->net_dev->name, fw_name);
+	if (rc)
 		return rc;
-	}
 	IPW_DEBUG_INFO("firmware data %p size %zd\n", fw->fw_entry->data,
 		       fw->fw_entry->size);
 

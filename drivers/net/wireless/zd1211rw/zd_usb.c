@@ -121,16 +121,9 @@ static void int_urb_complete(struct urb *urb);
 static int request_fw_file(
 	const struct firmware **fw, const char *name, struct device *device)
 {
-	int r;
-
 	dev_dbg_f(device, "fw name %s\n", name);
 
-	r = request_firmware(fw, name, device);
-	if (r)
-		dev_err(device,
-		       "Could not load firmware file %s. Error number %d\n",
-		       name, r);
-	return r;
+	return request_firmware(fw, name, device);
 }
 
 static inline u16 get_bcdDevice(const struct usb_device *udev)

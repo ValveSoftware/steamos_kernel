@@ -70,10 +70,8 @@ static int wl1251_fetch_firmware(struct wl1251 *wl)
 
 	ret = request_firmware(&fw, WL1251_FW_NAME, dev);
 
-	if (ret < 0) {
-		wl1251_error("could not get firmware: %d", ret);
+	if (ret)
 		return ret;
-	}
 
 	if (fw->size % 4) {
 		wl1251_error("firmware size is not multiple of 32 bits: %zu",
@@ -109,10 +107,8 @@ static int wl1251_fetch_nvs(struct wl1251 *wl)
 
 	ret = request_firmware(&fw, WL1251_NVS_NAME, dev);
 
-	if (ret < 0) {
-		wl1251_error("could not get nvs file: %d", ret);
+	if (ret)
 		return ret;
-	}
 
 	if (fw->size % 4) {
 		wl1251_error("nvs size is not multiple of 32 bits: %zu",

@@ -93,12 +93,9 @@ isl_upload_firmware(islpci_private *priv)
 		const u32 *fw_ptr;
 
 		rc = request_firmware(&fw_entry, priv->firmware, PRISM_FW_PDEV);
-		if (rc) {
-			printk(KERN_ERR
-			       "%s: request_firmware() failed for '%s'\n",
-			       "prism54", priv->firmware);
+		if (rc)
 			return rc;
-		}
+
 		/* prepare the Direct Memory Base register */
 		reg = ISL38XX_DEV_FIRMWARE_ADDRES;
 

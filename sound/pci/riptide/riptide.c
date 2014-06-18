@@ -1245,11 +1245,8 @@ static int try_to_load_firmware(struct cmdif *cif, struct snd_riptide *chip)
 	if (!chip->fw_entry) {
 		err = request_firmware(&chip->fw_entry, "riptide.hex",
 				       &chip->pci->dev);
-		if (err) {
-			snd_printk(KERN_ERR
-				   "Riptide: Firmware not available %d\n", err);
+		if (err)
 			return -EIO;
-		}
 	}
 	err = loadfirmware(cif, chip->fw_entry->data, chip->fw_entry->size);
 	if (err) {

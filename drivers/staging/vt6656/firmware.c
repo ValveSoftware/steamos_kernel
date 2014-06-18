@@ -57,11 +57,8 @@ int FIRMWAREbDownload(struct vnt_private *pDevice)
 	spin_unlock_irq(&pDevice->lock);
 
 	rc = request_firmware(&fw, FIRMWARE_NAME, dev);
-	if (rc) {
-		dev_err(dev, "firmware file %s request failed (%d)\n",
-			FIRMWARE_NAME, rc);
-			goto out;
-	}
+	if (rc)
+		goto out;
 
 	pBuffer = kmalloc(FIRMWARE_CHUNK_SIZE, GFP_KERNEL);
 	if (!pBuffer)

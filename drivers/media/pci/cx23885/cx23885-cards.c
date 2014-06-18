@@ -1795,11 +1795,7 @@ void cx23885_card_setup(struct cx23885_dev *dev)
 				cinfo.rev, filename);
 
 		ret = request_firmware(&fw, filename, &dev->pci->dev);
-		if (ret != 0)
-			printk(KERN_ERR "did not find the firmware file. (%s) "
-			"Please see linux/Documentation/dvb/ for more details "
-			"on firmware-problems.", filename);
-		else
+		if (ret == 0)
 			altera_init(&netup_config, fw);
 
 		release_firmware(fw);

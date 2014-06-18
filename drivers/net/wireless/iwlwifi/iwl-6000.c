@@ -31,7 +31,7 @@
 #include "dvm/commands.h" /* needed for BT for now */
 
 /* Highest firmware API version supported */
-#define IWL6000_UCODE_API_MAX 6
+#define IWL6000_UCODE_API_MAX 4 /* v5-6 are supported but not released */
 #define IWL6050_UCODE_API_MAX 5
 #define IWL6000G2_UCODE_API_MAX 6
 #define IWL6035_UCODE_API_MAX 6

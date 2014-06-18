@@ -930,7 +930,6 @@ static void p54u_load_firmware_cb(const struct firmware *firmware,
 		err = p54u_start_ops(priv);
 	} else {
 		err = -ENOENT;
-		dev_err(&udev->dev, "Firmware not found.\n");
 	}
 
 	if (err) {

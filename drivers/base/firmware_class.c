@@ -619,14 +619,23 @@ static ssize_t firmware_loading_store(struct device *dev,
 			 * is completed.
 			 * */
 			fw_map_pages_buf(fw_buf);
+			if (!fw_buf->data)
+				dev_err(dev->parent, "%s: vmap() failed\n",
+					__func__);
 			complete_all(&fw_buf->completion);
 			break;
 		}
 		/* fallthrough */
 	default:
-		dev_err(dev, "%s: unexpected value (%d)\n", __func__, loading);
-		/* fallthrough */
+		dev_err(dev->parent, "%s: unexpected value (%d)\n",
+			__func__, loading);
+		goto err;
 	case -1:
+		dev_err(dev->parent,
+			"firmware: agent aborted loading %s (not found?)\n",
+			fw_priv->buf->fw_id);
+		/* fallthrough */
+	err:
 		fw_load_abort(fw_priv);
 		break;
 	}
@@ -792,6 +801,9 @@ static void firmware_class_timeout_work(struct work_struct *work)
 			struct firmware_priv, timeout_work.work);
 
 	mutex_lock(&fw_lock);
+	dev_err(fw_priv->dev.parent,
+		"firmware: agent did not handle request for %s\n",
+		fw_priv->buf->fw_id);
 	fw_load_abort(fw_priv);
 	mutex_unlock(&fw_lock);
 }
@@ -843,25 +855,28 @@ static int _request_firmware_load(struct firmware_priv *fw_priv, bool uevent,
 
 	retval = device_add(f_dev);
 	if (retval) {
-		dev_err(f_dev, "%s: device_register failed\n", __func__);
+		dev_err(f_dev->parent, "%s: device_register failed\n",
+			__func__);
 		goto err_put_dev;
 	}
 
 	retval = device_create_bin_file(f_dev, &firmware_attr_data);
 	if (retval) {
-		dev_err(f_dev, "%s: sysfs_create_bin_file failed\n", __func__);
+		dev_err(f_dev->parent, "%s: sysfs_create_bin_file failed\n",
+			__func__);
 		goto err_del_dev;
 	}
 
 	retval = device_create_file(f_dev, &dev_attr_loading);
 	if (retval) {
-		dev_err(f_dev, "%s: device_create_file failed\n", __func__);
+		dev_err(f_dev->parent, "%s: device_create_file failed\n",
+			__func__);
 		goto err_del_bin_attr;
 	}
 
 	if (uevent) {
 		dev_set_uevent_suppress(f_dev, false);
-		dev_dbg(f_dev, "firmware: requesting %s\n", buf->fw_id);
+		dev_dbg(f_dev->parent, "firmware: requesting %s\n", buf->fw_id);
 		if (timeout != MAX_SCHEDULE_TIMEOUT)
 			schedule_delayed_work(&fw_priv->timeout_work, timeout);
 
@@ -949,7 +964,8 @@ _request_firmware_prepare(struct firmware **firmware_p, const char *name,
 	}
 
 	if (fw_get_builtin_firmware(firmware, name)) {
-		dev_dbg(device, "firmware: using built-in firmware %s\n", name);
+		dev_info(device, "firmware: using built-in firmware %s\n",
+			 name);
 		return 0; /* assigned */
 	}
 
@@ -979,8 +995,15 @@ static int assign_firmware_buf(struct firmware *fw, struct device *device)
 	struct firmware_buf *buf = fw->priv;
 
 	mutex_lock(&fw_lock);
-	if (!buf->size || is_fw_load_aborted(buf)) {
+	if (is_fw_load_aborted(buf)) {
+		/* failure has already been logged */
 		mutex_unlock(&fw_lock);
+		return -ENOENT;
+	} else if (!buf->size) {
+		dev_err(device->parent,
+			"firmware: agent loaded no data for %s (not found?)\n",
+			buf->fw_id);
+ 		mutex_unlock(&fw_lock);
 		return -ENOENT;
 	}
 
@@ -1030,7 +1053,7 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 	if (nowait) {
 		timeout = usermodehelper_read_lock_wait(timeout);
 		if (!timeout) {
-			dev_dbg(device, "firmware: %s loading timed out\n",
+			dev_err(device, "firmware: %s loading timed out\n",
 				name);
 			ret = -EBUSY;
 			goto out;
@@ -1056,6 +1079,9 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 	if (ret < 0) {
 		release_firmware(fw);
 		fw = NULL;
+	} else {
+		dev_info(device, "firmware: agent loaded %s into memory\n",
+			 name);
 	}
 
 	*firmware_p = fw;

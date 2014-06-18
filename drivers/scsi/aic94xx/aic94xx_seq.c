@@ -1317,11 +1317,8 @@ int asd_init_seqs(struct asd_ha_struct *asd_ha)
 
 	err = asd_request_firmware(asd_ha);
 
-	if (err) {
-		asd_printk("Failed to load sequencer firmware file %s, error %d\n",
-			   SAS_RAZOR_SEQUENCER_FW_FILE, err);
+	if (err)
 		return err;
-	}
 
 	err = asd_seq_download_seqs(asd_ha);
 	if (err) {

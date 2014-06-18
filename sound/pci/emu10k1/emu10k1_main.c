@@ -879,10 +879,8 @@ static int snd_emu10k1_emu1010_init(struct snd_emu10k1 *emu)
 		}
 
 		err = request_firmware(&emu->firmware, filename, &emu->pci->dev);
-		if (err != 0) {
-			snd_printk(KERN_ERR "emu1010: firmware: %s not found. Err = %d\n", filename, err);
+		if (err != 0)
 			return err;
-		}
 		snd_printk(KERN_INFO "emu1010: firmware file = %s, size = 0x%zx\n",
 			   filename, emu->firmware->size);
 	}
