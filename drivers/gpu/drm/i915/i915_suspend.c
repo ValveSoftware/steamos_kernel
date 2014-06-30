@@ -357,7 +357,10 @@ int i915_save_state(struct drm_device *dev)
 	intel_disable_gt_powersave(dev);
 
 	/* Cache mode state */
-	dev_priv->regfile.saveCACHE_MODE_0 = I915_READ(CACHE_MODE_0);
+	if (INTEL_INFO(dev)->gen >= 7)
+		dev_priv->regfile.saveCACHE_MODE_0 = I915_READ(CACHE_MODE_0_GEN7);
+	else
+		dev_priv->regfile.saveCACHE_MODE_0 = I915_READ(CACHE_MODE_0);
 
 	/* Memory Arbitration state */
 	dev_priv->regfile.saveMI_ARB_STATE = I915_READ(MI_ARB_STATE);
@@ -404,7 +407,12 @@ int i915_restore_state(struct drm_device *dev)
 	}
 
 	/* Cache mode state */
-	I915_WRITE(CACHE_MODE_0, dev_priv->regfile.saveCACHE_MODE_0 | 0xffff0000);
+	if (INTEL_INFO(dev)->gen >= 7)
+		I915_WRITE(CACHE_MODE_0_GEN7, dev_priv->regfile.saveCACHE_MODE_0 |
+			   0xffff0000);
+	else
+		I915_WRITE(CACHE_MODE_0, dev_priv->regfile.saveCACHE_MODE_0 |
+			   0xffff0000);
 
 	/* Memory arbitration state */
 	I915_WRITE(MI_ARB_STATE, dev_priv->regfile.saveMI_ARB_STATE | 0xffff0000);
