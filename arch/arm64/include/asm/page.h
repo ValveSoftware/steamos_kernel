@@ -28,9 +28,6 @@
 #define PAGE_SIZE		(_AC(1,UL) << PAGE_SHIFT)
 #define PAGE_MASK		(~(PAGE_SIZE-1))
 
-/* We do define AT_SYSINFO_EHDR but don't use the gate mechanism */
-#define __HAVE_ARCH_GATE_AREA		1
-
 #ifndef __ASSEMBLY__
 
 #ifdef CONFIG_ARM64_64K_PAGES
