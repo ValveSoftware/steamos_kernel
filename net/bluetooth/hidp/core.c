@@ -341,9 +341,14 @@ static int hidp_output_raw_report(struct hid_device *hid, unsigned char *data, s
 	int ret;
 
 	if (report_type == HID_OUTPUT_REPORT) {
-		report_type = HIDP_TRANS_DATA | HIDP_DATA_RTYPE_OUPUT;
-		return hidp_send_intr_message(session, report_type,
-					      data, count);
+		/* The Sixaxis and Dualshock 4 wants report sent via the ctrl channel */
+		if(hid->vendor == 0x54c && (hid->product == 0x5c4 || hid->product == 0x268)) {
+			report_type = HIDP_TRANS_SET_REPORT | HIDP_DATA_RTYPE_OUPUT;
+			return hidp_send_ctrl_message(session, report_type, data, count);
+		} else {
+			report_type = HIDP_TRANS_DATA | HIDP_DATA_RTYPE_OUPUT;
+			return hidp_send_intr_message(session, report_type, data, count);
+		}
 	} else if (report_type != HID_FEATURE_REPORT) {
 		return -EINVAL;
 	}
