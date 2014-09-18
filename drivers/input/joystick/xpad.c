@@ -297,6 +297,8 @@ struct usb_xpad {
 	dma_addr_t odata_dma;
 	spinlock_t odata_lock;
 
+	unsigned char odata_serial; /* serial number for xbox one protocol */
+
 #if defined(CONFIG_JOYSTICK_XPAD_LEDS)
 	struct xpad_led *led;
 #endif
@@ -923,6 +925,24 @@ static int xpad_play_effect(struct input_dev *dev, void *data, struct ff_effect 
 
 			return usb_submit_urb(xpad->irq_out, GFP_ATOMIC);
 
+		case XTYPE_XBOXONE:
+			xpad->odata[0] = 0x09;
+			xpad->odata[1] = 0x00;
+			xpad->odata[2] = xpad->odata_serial++;
+			xpad->odata[3] = 0x09;
+			xpad->odata[4] = 0x00;
+			xpad->odata[5] = 0x0F;
+			xpad->odata[6] = 0x00;
+			xpad->odata[7] = 0x00;
+			xpad->odata[8] = strong / 512;
+			xpad->odata[9] = weak / 512;
+			xpad->odata[10] = 0xFF;
+			xpad->odata[11] = 0x00;
+			xpad->odata[12] = 0x00;
+			xpad->irq_out->transfer_buffer_length = 13;
+
+			return usb_submit_urb(xpad->irq_out, GFP_ATOMIC);
+
 		default:
 			dev_dbg(&xpad->dev->dev,
 				"%s - rumble command sent to unsupported xpad type: %d\n",
@@ -936,7 +956,7 @@ static int xpad_play_effect(struct input_dev *dev, void *data, struct ff_effect 
 
 static int xpad_init_ff(struct usb_xpad *xpad)
 {
-	if (xpad->xtype == XTYPE_UNKNOWN || xpad->xtype == XTYPE_XBOXONE)
+	if (xpad->xtype == XTYPE_UNKNOWN)
 		return 0;
 
 	input_set_capability(xpad->dev, EV_FF, FF_RUMBLE);
@@ -1067,10 +1087,14 @@ static int xpad_open(struct input_dev *dev)
 		return -EIO;
 
 	if (xpad->xtype == XTYPE_XBOXONE) {
+		xpad->odata_serial = 0;
 		/* Xbox one controller needs to be initialized. */
 		xpad->odata[0] = 0x05;
 		xpad->odata[1] = 0x20;
-		xpad->irq_out->transfer_buffer_length = 2;
+		xpad->odata[2] = xpad->odata_serial++; /* packet serial */
+		xpad->odata[3] = 0x01; /* rumble bit enable?  */
+		xpad->odata[4] = 0x00;
+		xpad->irq_out->transfer_buffer_length = 5;
 		return usb_submit_urb(xpad->irq_out, GFP_KERNEL);
 	}
 
