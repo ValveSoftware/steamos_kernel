@@ -1480,6 +1480,8 @@ static int sony_leds_init(struct sony_sc *sc)
 	 */
 	if (!(sc->quirks & SIXAXIS_CONTROLLER_USB))
 		sony_set_leds(sc, initial_values, sc->led_count);
+	else
+		memcpy(sc->led_state, initial_values, sizeof(initial_values));
 
 	name_sz = strlen(dev_name(&hdev->dev)) + name_len + 1;
 
