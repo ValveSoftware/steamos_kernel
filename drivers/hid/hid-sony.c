@@ -2008,9 +2008,6 @@ static int sony_probe(struct hid_device *hdev, const struct hid_device_id *id)
 			}
 		}
 
-		if (ret < 0)
-			goto err_stop;
-
 		sony_init_work(sc, dualshock4_state_worker);
 	} else {
 		ret = 0;
