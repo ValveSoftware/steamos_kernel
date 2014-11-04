@@ -3827,6 +3827,10 @@ static void haswell_init_clock_gating(struct drm_device *dev)
 			WM_DBG_DISALLOW_SPRITE |
 			WM_DBG_DISALLOW_MAXFIFO);
 
+	/* Faster SAMPLE_C operations. */
+	I915_WRITE(HALF_SLICE_CHICKEN3,
+		   _MASKED_BIT_ENABLE(HSW_SAMPLE_C_PERFORMANCE));
+
 	lpt_init_clock_gating(dev);
 }
 

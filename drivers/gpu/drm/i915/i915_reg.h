@@ -4461,6 +4461,9 @@
 #define HSW_ROW_CHICKEN3		0xe49c
 #define  HSW_ROW_CHICKEN3_L3_GLOBAL_ATOMICS_DISABLE    (1 << 6)
 
+#define HALF_SLICE_CHICKEN3		0xe184
+#define   HSW_SAMPLE_C_PERFORMANCE	(1<<9)
+
 #define G4X_AUD_VID_DID			(dev_priv->info->display_mmio_offset + 0x62020)
 #define INTEL_AUDIO_DEVCL		0x808629FB
 #define INTEL_AUDIO_DEVBLC		0x80862801
