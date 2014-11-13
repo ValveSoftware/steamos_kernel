@@ -383,7 +383,6 @@ void __init map_vsyscall(void)
 {
 	extern char __vsyscall_page;
 	unsigned long physaddr_vsyscall = __pa_symbol(&__vsyscall_page);
-	extern char __vvar_page;
 
 	__set_fixmap(VSYSCALL_PAGE, physaddr_vsyscall,
 		     vsyscall_mode == NATIVE

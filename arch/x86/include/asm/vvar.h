@@ -32,15 +32,16 @@
 
 #else
 
+extern char __vvar_page;
+
 #define DECLARE_VVAR(offset, type, name)				\
-	static type const * const vvaraddr_ ## name =			\
-		(void *)(VVAR_ADDRESS + (offset));
+	extern type vvar_ ## name __attribute__((visibility("hidden")));
+
+#define VVAR(name) (vvar_ ## name)
 
 #define DEFINE_VVAR(type, name)						\
 	type name							\
-	__attribute__((section(".vvar_" #name), aligned(16)))
-
-#define VVAR(name) (*vvaraddr_ ## name)
+	__attribute__((section(".vvar_" #name), aligned(16))) __visible
 
 #endif
 
