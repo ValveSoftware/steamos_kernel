@@ -19,6 +19,9 @@
 /* Base address of vvars.  This is not ABI. */
 #define VVAR_ADDRESS (-10*1024*1024 - 4096)
 
+#ifndef _ASM_X86_VVAR_H
+#define _ASM_X86_VVAR_H
+
 #if defined(__VVAR_KERNEL_LDS)
 
 /* The kernel linker script defines its own magic to put vvars in the
@@ -29,15 +32,16 @@
 
 #else
 
+extern char __vvar_page;
+
 #define DECLARE_VVAR(offset, type, name)				\
-	static type const * const vvaraddr_ ## name =			\
-		(void *)(VVAR_ADDRESS + (offset));
+	extern type vvar_ ## name __attribute__((visibility("hidden")));
+
+#define VVAR(name) (vvar_ ## name)
 
 #define DEFINE_VVAR(type, name)						\
 	type name							\
-	__attribute__((section(".vvar_" #name), aligned(16)))
-
-#define VVAR(name) (*vvaraddr_ ## name)
+	__attribute__((section(".vvar_" #name), aligned(16))) __visible
 
 #endif
 
@@ -48,3 +52,5 @@ DECLARE_VVAR(16, int, vgetcpu_mode)
 DECLARE_VVAR(128, struct vsyscall_gtod_data, vsyscall_gtod_data)
 
 #undef DECLARE_VVAR
+
+#endif
