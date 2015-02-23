@@ -806,7 +806,7 @@ union sixaxis_output_report_01 {
 #define SIXAXIS_REPORT_0xF2_SIZE 17
 #define SIXAXIS_REPORT_0xF5_SIZE 8
 
-static spinlock_t sony_dev_list_lock;
+static DEFINE_SPINLOCK(sony_dev_list_lock);
 static LIST_HEAD(sony_device_list);
 static DEFINE_IDA(sony_device_id_allocator);
 
@@ -2072,6 +2072,8 @@ static int sony_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		hid_err(hdev, "can't alloc sony descriptor\n");
 		return -ENOMEM;
 	}
+
+	spin_lock_init(&sc->lock);
 
 	sc->quirks = quirks;
 	hid_set_drvdata(hdev, sc);
