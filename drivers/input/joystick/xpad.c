@@ -327,6 +327,13 @@ static void xpad_process_packet(struct usb_xpad *xpad, u16 cmd, unsigned char *d
 {
 	struct input_dev *dev = xpad->dev;
 
+	if (!dev) {
+		/* at startup we might start getting input packets before there's a
+		 kernel input device set up to receive events - avoid crash. */
+		dev_dbg(&xpad->intf->dev, "skipping input packet aimed at unbound input device");
+		return;
+	}
+
 	if (!(xpad->mapping & MAP_STICKS_TO_NULL)) {
 		/* left stick */
 		input_report_abs(dev, ABS_X,
@@ -397,6 +404,13 @@ static void xpad360_process_packet(struct usb_xpad *xpad,
 				   u16 cmd, unsigned char *data)
 {
 	struct input_dev *dev = xpad->dev;
+
+	if (!dev) {
+		/* at startup we might start getting input packets before there's a
+		 kernel input device set up to receive events - avoid crash. */
+		dev_dbg(&xpad->intf->dev, "skipping input packet aimed at unbound input device");
+		return;
+	}
 
 	/* digital pad */
 	if (xpad->mapping & MAP_DPAD_TO_BUTTONS) {
@@ -702,6 +716,13 @@ static void xpadone_process_packet(struct usb_xpad *xpad,
 {
 	struct input_dev *dev = xpad->dev;
 
+	if (!dev) {
+		/* at startup we might start getting input packets before there's a
+		 kernel input device set up to receive events - avoid crash. */
+		dev_dbg(&xpad->intf->dev, "skipping input packet aimed at unbound input device");
+		return;
+	}
+
 	switch (data[0]) {
 	case 0x20:
 		xpadone_process_buttons(xpad, dev, data);
@@ -860,7 +881,7 @@ static int xpad_init_output(struct usb_interface *intf, struct usb_xpad *xpad)
 
 static void xpad_stop_output(struct usb_xpad *xpad)
 {
-	if (xpad->xtype != XTYPE_UNKNOWN)
+	if (xpad->xtype != XTYPE_UNKNOWN && xpad->xtype != XTYPE_XBOX360W)
 		usb_kill_urb(xpad->irq_out);
 }
 
@@ -876,11 +897,14 @@ static void xpad_deinit_output(struct usb_xpad *xpad)
 #ifdef CONFIG_JOYSTICK_XPAD_FF
 static int xpad_play_effect(struct input_dev *dev, void *data, struct ff_effect *effect)
 {
+	int retval = 0;
 	struct usb_xpad *xpad = input_get_drvdata(dev);
 
 	if (effect->type == FF_RUMBLE) {
 		__u16 strong = effect->u.rumble.strong_magnitude;
 		__u16 weak = effect->u.rumble.weak_magnitude;
+
+		spin_lock(&xpad->odata_lock);
 
 		switch (xpad->xtype) {
 
@@ -893,7 +917,8 @@ static int xpad_play_effect(struct input_dev *dev, void *data, struct ff_effect 
 			xpad->odata[5] = weak / 256;	/* right actuator */
 			xpad->irq_out->transfer_buffer_length = 6;
 
-			return usb_submit_urb(xpad->irq_out, GFP_ATOMIC);
+			retval = usb_submit_urb(xpad->irq_out, GFP_ATOMIC);
+			break;
 
 		case XTYPE_XBOX360:
 			xpad->odata[0] = 0x00;
@@ -906,7 +931,8 @@ static int xpad_play_effect(struct input_dev *dev, void *data, struct ff_effect 
 			xpad->odata[7] = 0x00;
 			xpad->irq_out->transfer_buffer_length = 8;
 
-			return usb_submit_urb(xpad->irq_out, GFP_ATOMIC);
+			retval = usb_submit_urb(xpad->irq_out, GFP_ATOMIC);
+			break;
 
 		case XTYPE_XBOX360W:
 			xpad->odata[0] = 0x00;
@@ -923,7 +949,8 @@ static int xpad_play_effect(struct input_dev *dev, void *data, struct ff_effect 
 			xpad->odata[11] = 0x00;
 			xpad->irq_out->transfer_buffer_length = 12;
 
-			return usb_submit_urb(xpad->irq_out, GFP_ATOMIC);
+			retval = usb_submit_urb(xpad->irq_out, GFP_ATOMIC);
+			break;
 
 		case XTYPE_XBOXONE:
 			xpad->odata[0] = 0x09;
@@ -941,17 +968,21 @@ static int xpad_play_effect(struct input_dev *dev, void *data, struct ff_effect 
 			xpad->odata[12] = 0x00;
 			xpad->irq_out->transfer_buffer_length = 13;
 
-			return usb_submit_urb(xpad->irq_out, GFP_ATOMIC);
+			retval = usb_submit_urb(xpad->irq_out, GFP_ATOMIC);
+			break;
 
 		default:
 			dev_dbg(&xpad->dev->dev,
 				"%s - rumble command sent to unsupported xpad type: %d\n",
 				__func__, xpad->xtype);
-			return -1;
+			retval = -1;
+			break;
 		}
+
+		spin_unlock(&xpad->odata_lock);
 	}
 
-	return 0;
+	return retval;
 }
 
 static int xpad_init_ff(struct usb_xpad *xpad)
@@ -967,15 +998,6 @@ static int xpad_init_ff(struct usb_xpad *xpad)
 #else
 static int xpad_init_ff(struct usb_xpad *xpad) { return 0; }
 #endif
-
-#if defined(CONFIG_JOYSTICK_XPAD_LEDS)
-#include <linux/leds.h>
-
-struct xpad_led {
-	char name[16];
-	struct led_classdev led_cdev;
-	struct usb_xpad *xpad;
-};
 
 static void xpad_send_led_command(struct usb_xpad *xpad, int command)
 {
@@ -1012,6 +1034,15 @@ static void xpad_send_led_command(struct usb_xpad *xpad, int command)
 	usb_submit_urb(xpad->irq_out, GFP_KERNEL);
 	spin_unlock(&xpad->odata_lock);
 }
+
+#if defined(CONFIG_JOYSTICK_XPAD_LEDS)
+#include <linux/leds.h>
+
+struct xpad_led {
+	char name[16];
+	struct led_classdev led_cdev;
+	struct usb_xpad *xpad;
+};
 
 static void xpad_led_set(struct led_classdev *led_cdev,
 			 enum led_brightness value)
@@ -1302,6 +1333,8 @@ static int xpad_probe(struct usb_interface *intf, const struct usb_device_id *id
 		xpad->irq_out->transfer_buffer_length = 12;
 		usb_submit_urb(xpad->irq_out, GFP_KERNEL);
 		spin_unlock(&xpad->odata_lock);
+
+		xpad->pad_present = 0;
 	} else {
 		my_work_t *work;
 		xpad->pad_present = 1;
