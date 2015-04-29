@@ -881,7 +881,7 @@ static int xpad_init_output(struct usb_interface *intf, struct usb_xpad *xpad)
 
 static void xpad_stop_output(struct usb_xpad *xpad)
 {
-	if (xpad->xtype != XTYPE_UNKNOWN)
+	if (xpad->xtype != XTYPE_UNKNOWN && xpad->xtype != XTYPE_XBOX360W)
 		usb_kill_urb(xpad->irq_out);
 }
 
@@ -1333,6 +1333,8 @@ static int xpad_probe(struct usb_interface *intf, const struct usb_device_id *id
 		xpad->irq_out->transfer_buffer_length = 12;
 		usb_submit_urb(xpad->irq_out, GFP_KERNEL);
 		spin_unlock(&xpad->odata_lock);
+
+		xpad->pad_present = 0;
 	} else {
 		my_work_t *work;
 		xpad->pad_present = 1;
