@@ -327,6 +327,13 @@ static void xpad_process_packet(struct usb_xpad *xpad, u16 cmd, unsigned char *d
 {
 	struct input_dev *dev = xpad->dev;
 
+	if (!dev) {
+		/* at startup we might start getting input packets before there's a
+		 kernel input device set up to receive events - avoid crash. */
+		dev_dbg(&xpad->intf->dev, "skipping input packet aimed at unbound input device");
+		return;
+	}
+
 	if (!(xpad->mapping & MAP_STICKS_TO_NULL)) {
 		/* left stick */
 		input_report_abs(dev, ABS_X,
@@ -397,6 +404,13 @@ static void xpad360_process_packet(struct usb_xpad *xpad,
 				   u16 cmd, unsigned char *data)
 {
 	struct input_dev *dev = xpad->dev;
+
+	if (!dev) {
+		/* at startup we might start getting input packets before there's a
+		 kernel input device set up to receive events - avoid crash. */
+		dev_dbg(&xpad->intf->dev, "skipping input packet aimed at unbound input device");
+		return;
+	}
 
 	/* digital pad */
 	if (xpad->mapping & MAP_DPAD_TO_BUTTONS) {
@@ -701,6 +715,13 @@ static void xpadone_process_packet(struct usb_xpad *xpad,
 				u16 cmd, unsigned char *data)
 {
 	struct input_dev *dev = xpad->dev;
+
+	if (!dev) {
+		/* at startup we might start getting input packets before there's a
+		 kernel input device set up to receive events - avoid crash. */
+		dev_dbg(&xpad->intf->dev, "skipping input packet aimed at unbound input device");
+		return;
+	}
 
 	switch (data[0]) {
 	case 0x20:
