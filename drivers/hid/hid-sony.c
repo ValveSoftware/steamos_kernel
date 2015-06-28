@@ -803,9 +803,10 @@ union sixaxis_output_report_01 {
 #define DS4_REPORT_0x05_SIZE 32
 #define DS4_REPORT_0x11_SIZE 78
 #define DS4_REPORT_0x81_SIZE 7
-#define SIXAXIS_REPORT_0xF2_SIZE 18
+#define SIXAXIS_REPORT_0xF2_SIZE 17
+#define SIXAXIS_REPORT_0xF5_SIZE 8
 
-static spinlock_t sony_dev_list_lock;
+static DEFINE_SPINLOCK(sony_dev_list_lock);
 static LIST_HEAD(sony_device_list);
 static DEFINE_IDA(sony_device_id_allocator);
 
@@ -1187,8 +1188,12 @@ static int sixaxis_set_operational_usb(struct hid_device *hdev)
 	struct usb_device *dev = interface_to_usbdev(intf);
 	__u16 ifnum = intf->cur_altsetting->desc.bInterfaceNumber;
 	int ret;
-	char *buf = kmalloc(18, GFP_KERNEL);
+	int transferred;
+	const int buf_size = max(SIXAXIS_REPORT_0xF2_SIZE,
+				SIXAXIS_REPORT_0xF5_SIZE);
+	__u8 *buf;
 
+	buf = kmalloc(buf_size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -1196,11 +1201,37 @@ static int sixaxis_set_operational_usb(struct hid_device *hdev)
 				 HID_REQ_GET_REPORT,
 				 USB_DIR_IN | USB_TYPE_CLASS |
 				 USB_RECIP_INTERFACE,
-				 (3 << 8) | 0xf2, ifnum, buf, 17,
+				 (3 << 8) | 0xf2, ifnum, buf,
+				 SIXAXIS_REPORT_0xF2_SIZE,
 				 USB_CTRL_GET_TIMEOUT);
-	if (ret < 0)
-		hid_err(hdev, "can't set operational mode\n");
+	if (ret < 0) {
+		hid_err(hdev, "can't set operational mode: step 1\n");
+		goto out;
+	}
 
+	/*
+	 * Some compatible controllers like the Speedlink Strike FX and
+	 * Gasia need another query plus an USB interrupt to get operational.
+	 */
+	ret = usb_control_msg(dev, usb_rcvctrlpipe(dev, 0),
+				 HID_REQ_GET_REPORT,
+				 USB_DIR_IN | USB_TYPE_CLASS |
+				 USB_RECIP_INTERFACE,
+				 (3 << 8) | 0xf5, ifnum, buf,
+				 SIXAXIS_REPORT_0xF5_SIZE,
+				 USB_CTRL_GET_TIMEOUT);
+	if (ret < 0) {
+		hid_err(hdev, "can't set operational mode: step 2\n");
+		goto out;
+	}
+
+	buf[0] = 0x00;
+	ret = usb_interrupt_msg(dev, usb_sndintpipe(dev, 0x02),
+				buf, 1,	&transferred, USB_CTRL_SET_TIMEOUT);
+	if (ret < 0)
+		hid_err(hdev, "can't set operational mode: step 3\n");
+
+out:
 	kfree(buf);
 
 	return ret;
@@ -2042,6 +2073,8 @@ static int sony_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		return -ENOMEM;
 	}
 
+	spin_lock_init(&sc->lock);
+
 	sc->quirks = quirks;
 	hid_set_drvdata(hdev, sc);
 	sc->hdev = hdev;
@@ -2224,8 +2257,8 @@ static void __exit sony_exit(void)
 {
 	dbg_hid("Sony:%s\n", __func__);
 
-	ida_destroy(&sony_device_id_allocator);
 	hid_unregister_driver(&sony_driver);
+	ida_destroy(&sony_device_id_allocator);
 }
 module_init(sony_init);
 module_exit(sony_exit);
