@@ -1157,14 +1157,13 @@ static int sixaxis_set_operational_bt(struct hid_device *hdev)
 	if (!buf)
 		return -ENOMEM;
 
-	ret = hdev->hid_output_raw_request(hdev, buf, sizeof(report),
+	ret = hid_hw_raw_request(hdev, buf[0], buf, sizeof(report),
 				HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
 
 	kfree(buf);
 
 	return ret;
 }
-
 /*
  * Requesting feature report 0x02 in Bluetooth mode changes the state of the
  * controller so that it sends full input reports of type 0x11.
@@ -1178,7 +1177,7 @@ static int dualshock4_set_operational_bt(struct hid_device *hdev)
 	if (!buf)
 		return -ENOMEM;
 
-	ret = hdev->hid_get_raw_request(hdev, 0x02, buf, DS4_REPORT_0x02_SIZE,
+	ret = hid_hw_raw_request(hdev, 0x02, buf, DS4_REPORT_0x02_SIZE,
 				HID_FEATURE_REPORT, HID_REQ_GET_REPORT);
 
 	kfree(buf);
@@ -1499,8 +1498,6 @@ error_leds:
 static void sixaxis_state_worker(struct work_struct *work)
 {
 	struct sony_sc *sc = container_of(work, struct sony_sc, state_worker);
-	struct sixaxis_output_report *report =
-		(struct sixaxis_output_report *)sc->output_report_dmabuf;
 	int n;
 	static const union sixaxis_output_report_01 default_report = {
 		.buf = {
@@ -1514,6 +1511,8 @@ static void sixaxis_state_worker(struct work_struct *work)
 			0x00, 0x00, 0x00, 0x00, 0x00
 		}
 	};
+	struct sixaxis_output_report *report =
+		(struct sixaxis_output_report *)sc->output_report_dmabuf;
 
 	/* Initialize the report with default values */
 	memcpy(report, &default_report, sizeof(struct sixaxis_output_report));
@@ -1543,12 +1542,12 @@ static void sixaxis_state_worker(struct work_struct *work)
 	 */
 	for (n = 0; n < 4; n++) {
 		if (sc->led_delay_on[n] || sc->led_delay_off[n]) {
-			report[3 - n].duty_off = sc->led_delay_off[n];
-			report[3 - n].duty_on = sc->led_delay_on[n];
+			report->led[3 - n].duty_off = sc->led_delay_off[n];
+			report->led[3 - n].duty_on = sc->led_delay_on[n];
 		}
 	}
 
-	hid_hw_raw_request(sc->hdev, (__u8 *)report, report.buf,
+	hid_hw_raw_request(sc->hdev, *((__u8 *)report), ((union sixaxis_output_report_01 *)report)->buf,
 			sizeof(struct sixaxis_output_report), HID_OUTPUT_REPORT, HID_REQ_SET_REPORT);
 }
 
@@ -1593,11 +1592,10 @@ static void dualshock4_state_worker(struct work_struct *work)
 	buf[offset++] = sc->led_delay_off[3];
 
 	if (sc->quirks & DUALSHOCK4_CONTROLLER_USB)
-		hdev->hid_output_raw_report(hdev, buf, DS4_REPORT_0x05_SIZE,
-					HID_OUTPUT_REPORT);
+		hid_hw_output_report(hdev, buf, DS4_REPORT_0x05_SIZE);
 	else
-		hdev->hid_output_raw_report(hdev, buf, DS4_REPORT_0x11_SIZE,
-					HID_OUTPUT_REPORT);
+		hid_hw_raw_request(hdev, 0x11, buf, DS4_REPORT_0x11_SIZE,
+				HID_OUTPUT_REPORT, HID_REQ_SET_REPORT);
 }
 
 static int sony_allocate_output_report(struct sony_sc *sc)
@@ -1833,14 +1831,12 @@ static int sony_check_add(struct sony_sc *sc)
 		 * retrieved with feature report 0x81. The address begins at
 		 * offset 1.
 		 */
-		ret = sc->hdev->hid_get_raw_report(sc->hdev, 0x81, buf,
-					DS4_REPORT_0x81_SIZE,
-					HID_FEATURE_REPORT,
-					HID_REQ_GET_REPORT);
+		ret = hid_hw_raw_request(sc->hdev, 0x81, buf, DS4_REPORT_0x81_SIZE,
+				HID_FEATURE_REPORT, HID_REQ_GET_REPORT);
 
 		if (ret != DS4_REPORT_0x81_SIZE) {
 			hid_err(sc->hdev, "failed to retrieve feature report 0x81 with the DualShock 4 MAC address\n");
-			ret ret < 0 ? ret : -EINVAL;
+			ret = ret < 0 ? ret : -EINVAL;
 			goto out_free;
 		}
 
@@ -1861,7 +1857,7 @@ static int sony_check_add(struct sony_sc *sc)
 
 		if (ret != SIXAXIS_REPORT_0xF2_SIZE) {
 			hid_err(sc->hdev, "failed to retrieve feature report 0xf2 with the Sixaxis MAC address\n");
-			ret ret < 0 ? ret : -EINVAL;
+			ret = ret < 0 ? ret : -EINVAL;
 			goto out_free;
 		}
 
