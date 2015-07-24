@@ -334,9 +334,6 @@ struct usb_xpad {
 	unsigned char *idata;		/* input data */
 	dma_addr_t idata_dma;
 
-	struct urb *bulk_out;
-	unsigned char *bdata;
-
 	struct urb *irq_out;		/* urb for interrupt out report */
 	int irq_out_busy;		/* is urb submitted, odata_mutex must be held */
 	unsigned char *odata;		/* output data */
@@ -521,7 +518,6 @@ static void xpad360w_process_packet(struct usb_xpad *xpad, u16 cmd, unsigned cha
 	if (data[0] & 0x08) {
 		if (data[1] & 0x80) {
 			xpad->pad_present = 1;
-			usb_submit_urb(xpad->bulk_out, GFP_ATOMIC);
 			xpad_identify_controller(xpad);
 		} else
 			xpad->pad_present = 0;
@@ -677,28 +673,6 @@ exit:
 	if (retval)
 		dev_err(dev, "%s - usb_submit_urb failed with result %d\n",
 			__func__, retval);
-}
-
-static void xpad_bulk_out(struct urb *urb)
-{
-	struct usb_xpad *xpad = urb->context;
-	struct device *dev = &xpad->intf->dev;
-
-	switch (urb->status) {
-	case 0:
-		/* success */
-		break;
-	case -ECONNRESET:
-	case -ENOENT:
-	case -ESHUTDOWN:
-		/* this urb is terminated, clean up */
-		dev_dbg(dev, "%s - urb shutting down with status: %d\n",
-			__func__, urb->status);
-		break;
-	default:
-		dev_dbg(dev, "%s - nonzero urb status received: %d\n",
-			__func__, urb->status);
-	}
 }
 
 /* odata_mutex must be held */
@@ -1324,72 +1298,24 @@ static int xpad_probe(struct usb_interface *intf, const struct usb_device_id *id
 
 	if (xpad->xtype == XTYPE_XBOX360W) {
 		/*
-		 * Setup the message to set the LEDs on the
-		 * controller when it shows up
-		 */
-		mutex_lock(&xpad->odata_mutex);
-		xpad->bulk_out = usb_alloc_urb(0, GFP_KERNEL);
-		if (!xpad->bulk_out) {
-			error = -ENOMEM;
-			goto fail7;
-		}
-
-		xpad->bdata = kzalloc(XPAD_PKT_LEN, GFP_KERNEL);
-		if (!xpad->bdata) {
-			error = -ENOMEM;
-			goto fail8;
-		}
-
-		xpad->bdata[2] = 0x08;
-		switch (intf->cur_altsetting->desc.bInterfaceNumber) {
-		case 0:
-			xpad->bdata[3] = 0x42;
-			break;
-		case 2:
-			xpad->bdata[3] = 0x43;
-			break;
-		case 4:
-			xpad->bdata[3] = 0x44;
-			break;
-		case 6:
-			xpad->bdata[3] = 0x45;
-		}
-
-		ep_irq_in = &intf->cur_altsetting->endpoint[1].desc;
-		if (usb_endpoint_is_bulk_out(ep_irq_in)) {
-			usb_fill_bulk_urb(xpad->bulk_out, udev,
-					  usb_sndbulkpipe(udev,
-							  ep_irq_in->bEndpointAddress),
-					  xpad->bdata, XPAD_PKT_LEN,
-					  xpad_bulk_out, xpad);
-		} else {
-			usb_fill_int_urb(xpad->bulk_out, udev,
-					 usb_sndintpipe(udev,
-							ep_irq_in->bEndpointAddress),
-					 xpad->bdata, XPAD_PKT_LEN,
-					 xpad_bulk_out, xpad, 0);
-		}
-
-		/*
 		 * Submit the int URB immediately rather than waiting for open
 		 * because we get status messages from the device whether
 		 * or not any controllers are attached.  In fact, it's
 		 * exactly the message that a controller has arrived that
 		 * we're waiting for.
 		 */
+		mutex_lock(&xpad->odata_mutex);
 		xpad->irq_in->dev = xpad->udev;
 		error = usb_submit_urb(xpad->irq_in, GFP_KERNEL);
 
 		if (error)
-			goto fail9;
+			goto fail7;
 
 		mutex_unlock(&xpad->odata_mutex);
 	}
 
 	return 0;
 
- fail9:	kfree(xpad->bdata);
- fail8:	usb_free_urb(xpad->bulk_out);
  fail7:	input_unregister_device(input_dev);
 	input_dev = NULL;
 	mutex_unlock(&xpad->odata_mutex);
@@ -1414,8 +1340,6 @@ static void xpad_disconnect(struct usb_interface *intf)
 	xpad_deinit_output(xpad);
 
 	if (xpad->xtype == XTYPE_XBOX360W) {
-		usb_kill_urb(xpad->bulk_out);
-		usb_free_urb(xpad->bulk_out);
 		usb_kill_urb(xpad->irq_in);
 	}
 
@@ -1423,7 +1347,6 @@ static void xpad_disconnect(struct usb_interface *intf)
 	usb_free_coherent(xpad->udev, XPAD_PKT_LEN,
 			xpad->idata, xpad->idata_dma);
 
-	kfree(xpad->bdata);
 	kfree(xpad);
 
 	usb_set_intfdata(intf, NULL);
