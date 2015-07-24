@@ -354,9 +354,11 @@ struct usb_xpad {
 
 	int mapping;			/* map d-pad to buttons or to axes */
 	int xtype;			/* type of xbox device */
+	unsigned long pad_nr;		/* the order x360 pads were attached */
 };
 
 static int xpad_send_ff(struct usb_xpad *xpad, int strong, int weak);
+static void xpad_identify_controller(struct usb_xpad *xpad);
 
 /*
  *	xpad_process_packet
@@ -367,7 +369,6 @@ static int xpad_send_ff(struct usb_xpad *xpad, int strong, int weak);
  *	The used report descriptor was taken from ITO Takayukis website:
  *	 http://euc.jp/periphs/xbox-controller.ja.html
  */
-
 static void xpad_process_packet(struct usb_xpad *xpad, u16 cmd, unsigned char *data)
 {
 	struct input_dev *dev = xpad->dev;
@@ -514,7 +515,6 @@ static void xpad360_process_packet(struct usb_xpad *xpad,
  * 01.1 - Pad state (Bytes 4+) valid
  *
  */
-
 static void xpad360w_process_packet(struct usb_xpad *xpad, u16 cmd, unsigned char *data)
 {
 	/* Presence change */
@@ -522,6 +522,7 @@ static void xpad360w_process_packet(struct usb_xpad *xpad, u16 cmd, unsigned cha
 		if (data[1] & 0x80) {
 			xpad->pad_present = 1;
 			usb_submit_urb(xpad->bulk_out, GFP_ATOMIC);
+			xpad_identify_controller(xpad);
 		} else
 			xpad->pad_present = 0;
 	}
@@ -1030,6 +1031,14 @@ static void xpad_send_led_command(struct usb_xpad *xpad, int command)
 	}
 }
 
+/*
+ * Light up the segment corresponding to the pad number on Xbox 360 Controllers
+ */
+static void xpad_identify_controller(struct usb_xpad *xpad)
+{
+	xpad_send_led_command(xpad, (xpad->pad_nr % 4) + 2);
+}
+
 static void xpad_led_set(struct led_classdev *led_cdev,
 			 enum led_brightness value)
 {
@@ -1042,7 +1051,6 @@ static void xpad_led_set(struct led_classdev *led_cdev,
 static int xpad_led_probe(struct usb_xpad *xpad)
 {
 	static atomic_t led_seq	= ATOMIC_INIT(0);
-	long led_no;
 	struct xpad_led *led;
 	struct led_classdev *led_cdev;
 	int error;
@@ -1054,9 +1062,9 @@ static int xpad_led_probe(struct usb_xpad *xpad)
 	if (!led)
 		return -ENOMEM;
 
-	led_no = (long)atomic_inc_return(&led_seq) - 1;
+	xpad->pad_nr = atomic_inc_return(&led_seq);
 
-	snprintf(led->name, sizeof(led->name), "xpad%ld", led_no);
+	snprintf(led->name, sizeof(led->name), "xpad%lu", xpad->pad_nr);
 	led->xpad = xpad;
 
 	led_cdev = &led->led_cdev;
@@ -1070,10 +1078,7 @@ static int xpad_led_probe(struct usb_xpad *xpad)
 		return error;
 	}
 
-	/*
-	 * Light up the segment corresponding to controller number
-	 */
-	xpad_send_led_command(xpad, (led_no % 4) + 2);
+	xpad_identify_controller(xpad);
 
 	return 0;
 }
@@ -1091,7 +1096,6 @@ static void xpad_led_disconnect(struct usb_xpad *xpad)
 static int xpad_led_probe(struct usb_xpad *xpad) { return 0; }
 static void xpad_led_disconnect(struct usb_xpad *xpad) { }
 #endif
-
 
 static int xpad_open(struct input_dev *dev)
 {
