@@ -1220,6 +1220,27 @@ static void sixaxis_set_leds_from_id(int id, __u8 values[MAX_LEDS])
 	memcpy(values, sixaxis_leds[id], sizeof(sixaxis_leds[id]));
 }
 
+static int sony_find_joydev(struct device *dev, void *data)
+{
+	if (strstr(dev_name(dev), "js"))
+		return 1;
+
+	return 0;
+}
+
+static int sony_get_js_number(struct sony_sc *sc)
+{
+	struct hid_input *hidinput = list_entry(sc->hdev->inputs.next,
+						struct hid_input, list);
+	struct input_dev *input_dev = hidinput->input;
+	struct device* joydev_dev = device_find_child(&input_dev->dev, NULL, sony_find_joydev);
+
+	if (joydev_dev)
+		return MINOR(joydev_dev->devt);
+
+	return -ENOENT;
+}
+
 static void dualshock4_set_leds_from_id(int id, __u8 values[MAX_LEDS])
 {
 	/* The first 4 color/index entries match what the PS4 assigns */
@@ -1411,6 +1432,7 @@ static int sony_leds_init(struct sony_sc *sc)
 {
 	struct hid_device *hdev = sc->hdev;
 	int n, ret = 0;
+	int led_value;
 	int use_ds4_names;
 	struct led_classdev *led;
 	size_t name_sz;
@@ -1425,6 +1447,14 @@ static int sony_leds_init(struct sony_sc *sc)
 
 	BUG_ON(!(sc->quirks & SONY_LED_SUPPORT));
 
+	/*
+	 * Try to use the joystick number to set the LED values.
+	 * If it's not available, use the device ID.
+	 */
+	led_value = sony_get_js_number(sc);
+	if (led_value < 0)
+		led_value = sc->device_id;
+
 	if (sc->quirks & BUZZ_CONTROLLER) {
 		sc->led_count = 4;
 		use_ds4_names = 0;
@@ -1434,7 +1464,7 @@ static int sony_leds_init(struct sony_sc *sc)
 		if (!hid_validate_values(hdev, HID_OUTPUT_REPORT, 0, 0, 7))
 			return -ENODEV;
 	} else if (sc->quirks & DUALSHOCK4_CONTROLLER) {
-		dualshock4_set_leds_from_id(sc->device_id, initial_values);
+		dualshock4_set_leds_from_id(led_value, initial_values);
 		initial_values[3] = 1;
 		sc->led_count = 4;
 		memset(max_brightness, 255, 3);
@@ -1443,7 +1473,7 @@ static int sony_leds_init(struct sony_sc *sc)
 		name_len = 0;
 		name_fmt = "%s:%s";
 	} else {
-		sixaxis_set_leds_from_id(sc->device_id, initial_values);
+		sixaxis_set_leds_from_id(led_value, initial_values);
 		sc->led_count = 4;
 		memset(use_hw_blink, 1, 4);
 		use_ds4_names = 0;
