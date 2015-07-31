@@ -363,6 +363,12 @@ static void xpad_identify_controller(struct usb_xpad *xpad);
 static int xpad_init_input(struct usb_xpad *xpad);
 static void xpad_deinit_input(struct usb_xpad *xpad);
 
+static void xpad_send_led_command(struct usb_xpad *xpad, int command);
+static int xpad_open(struct input_dev *dev);
+static void xpad_close(struct input_dev *dev);
+static void xpad_set_up_abs(struct input_dev *input_dev, signed short abs);
+static int xpad_init_ff(struct usb_xpad *xpad);
+
 /*
  *	xpad_process_packet
  *
