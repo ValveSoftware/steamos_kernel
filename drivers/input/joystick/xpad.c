@@ -1018,19 +1018,35 @@ struct xpad_led {
 
 static void xpad_send_led_command(struct usb_xpad *xpad, int command)
 {
-	unsigned char *odata;
-
 	if (command >= 0 && command < 14) {
 		mutex_lock(&xpad->odata_mutex);
-		odata = xpad_get_irq_out_buffer(xpad);
+		switch (xpad->xtype) {
 
-		if(odata) {
-			odata[0] = 0x01;
-			odata[1] = 0x03;
-			odata[2] = command;
-			xpad_submit_irq_out_buffer(xpad, odata, 3);
+			case XTYPE_XBOX360:
+				xpad->odata[0] = 0x01;
+				xpad->odata[1] = 0x03;
+				xpad->odata[2] = command;
+				xpad->irq_out->transfer_buffer_length = 3;
+				break;
+
+			case XTYPE_XBOX360W:
+				xpad->odata[0] = 0x00;
+				xpad->odata[1] = 0x00;
+				xpad->odata[2] = 0x08;
+				xpad->odata[3] = 0x40 + (command % 0x0e);
+				xpad->odata[4] = 0x00;
+				xpad->odata[5] = 0x00;
+				xpad->odata[6] = 0x00;
+				xpad->odata[7] = 0x00;
+				xpad->odata[8] = 0x00;
+				xpad->odata[9] = 0x00;
+				xpad->odata[10] = 0x00;
+				xpad->odata[11] = 0x00;
+				xpad->irq_out->transfer_buffer_length = 12;
+				break;
 		}
 
+		usb_submit_urb(xpad->irq_out, GFP_KERNEL);
 		mutex_unlock(&xpad->odata_mutex);
 	}
 }
