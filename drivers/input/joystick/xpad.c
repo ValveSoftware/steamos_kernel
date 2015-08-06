@@ -347,6 +347,8 @@ struct usb_xpad {
 	struct xpad_led *led;
 #endif
 
+	int joydev_id;
+
 	char phys[64];			/* physical device path */
 
 	int mapping;			/* map d-pad to buttons or to axes */
@@ -368,6 +370,13 @@ static int xpad_open(struct input_dev *dev);
 static void xpad_close(struct input_dev *dev);
 static void xpad_set_up_abs(struct input_dev *input_dev, signed short abs);
 static int xpad_init_ff(struct usb_xpad *xpad);
+static int xpad_find_joydev(struct device *dev, void *data)
+{
+	if (strstr(dev_name(dev), "js"))
+		return 1;
+
+	return 0;
+}
 
 /*
  *	xpad_process_packet
@@ -1253,8 +1262,6 @@ static int xpad_init_input(struct usb_xpad *xpad)
 			xpad_set_up_abs(input_dev, xpad_abs_triggers[i]);
 	}
 
-	xpad_identify_controller(xpad);
-
 	error = xpad_init_ff(xpad);
 	if (error)
 		goto fail_init_ff;
@@ -1264,8 +1271,21 @@ static int xpad_init_input(struct usb_xpad *xpad)
 		goto fail_init_led;
 
 	error = input_register_device(xpad->dev);
-	if (error)
+	if (error == 0)
+	{
+		struct device* joydev_dev = device_find_child(&xpad->dev->dev, NULL, xpad_find_joydev);
+
+		if (joydev_dev) {
+			xpad->joydev_id = MINOR(joydev_dev->devt);
+			xpad_send_led_command(xpad, (xpad->joydev_id % 4) + 2);
+		}
+	}
+	else
+	{
 		goto fail_input_register;
+	}
+
+	xpad_identify_controller(xpad);
 
 	return 0;
 
