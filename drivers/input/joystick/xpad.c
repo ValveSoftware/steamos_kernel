@@ -976,6 +976,7 @@ static int xpad_send_ff(struct usb_xpad *xpad, int strong, int weak)
 			odata[9] = weak / 512;
 			odata[10] = 0xFF;
 			odata[11] = 0x00;
+			odata[12] = 0x00;
 
 			transfer_length = 13;
 			break;
