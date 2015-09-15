@@ -330,6 +330,7 @@ struct usb_xpad {
 	struct usb_interface *intf;	/* usb interface */
 
 	int pad_present;
+	int input_ready;
 
 	struct urb *irq_in;		/* urb for interrupt in report */
 	unsigned char *idata;		/* input data */
@@ -525,7 +526,7 @@ static void presence_work_function(struct work_struct *work)
 		error = xpad_init_input(xpad);
 		if (error) {
 			/* complain only, not much else we can do here */
-			dev_err(&xpad->dev->dev, "unable to init device\n");
+			dev_err(&xpad->intf->dev, "unable to init device\n");
 		}
 	} else {
 		xpad_deinit_input(xpad);
@@ -557,11 +558,15 @@ static void xpad360w_process_packet(struct usb_xpad *xpad, u16 cmd, unsigned cha
 		if (xpad->pad_present != presence) {
 			xpad->pad_present = presence;
 			schedule_work(&xpad->work);
+			return;
 		}
 	}
 
 	/* Valid pad data */
 	if (!(data[1] & 0x1))
+		return;
+	
+	if (!xpad->input_ready)
 		return;
 
 	xpad360_process_packet(xpad, cmd, &data[4]);
@@ -1270,6 +1275,8 @@ static int xpad_init_input(struct usb_xpad *xpad)
 	{
 		goto fail_input_register;
 	}
+	
+	xpad->input_ready = 1;
 
 	error = xpad_led_probe(xpad);
 	if (error)
@@ -1296,8 +1303,9 @@ static int xpad_probe(struct usb_interface *intf, const struct usb_device_id *id
 	struct usb_xpad *xpad;
 	struct usb_endpoint_descriptor *ep_irq_in;
 	int ep_irq_in_idx;
-	int i, error;
+	int i, error = 0;
 	unsigned long flags;
+	unsigned char *odata;
 
 	for (i = 0; xpad_device[i].idVendor; i++) {
 		if ((le16_to_cpu(udev->descriptor.idVendor) == xpad_device[i].idVendor) &&
@@ -1386,16 +1394,15 @@ static int xpad_probe(struct usb_interface *intf, const struct usb_device_id *id
 		 * exactly the message that a controller has arrived that
 		 * we're waiting for.
 		 */
-		spin_lock_irqsave(&xpad->odata_lock, flags);
 		xpad->irq_in->dev = xpad->udev;
 		error = usb_submit_urb(xpad->irq_in, GFP_KERNEL);
-
+		
 		if (error) {
 			usb_kill_urb(xpad->irq_in);
-			spin_unlock_irqrestore(&xpad->odata_lock, flags);
 			goto fail4;
 		}
-
+		
+		spin_lock_irqsave(&xpad->odata_lock, flags);
 		/*
 		 * send presence packet
 		 * This will force the controller to resend connection packets.
@@ -1403,21 +1410,28 @@ static int xpad_probe(struct usb_interface *intf, const struct usb_device_id *id
 		 * adapter has been plugged in, as it won't automatically
 		 * send us info about the controllers.
 		 */
-		xpad->odata[0] = 0x08;
-		xpad->odata[1] = 0x00;
-		xpad->odata[2] = 0x0F;
-		xpad->odata[3] = 0xC0;
-		xpad->odata[4] = 0x00;
-		xpad->odata[5] = 0x00;
-		xpad->odata[6] = 0x00;
-		xpad->odata[7] = 0x00;
-		xpad->odata[8] = 0x00;
-		xpad->odata[9] = 0x00;
-		xpad->odata[10] = 0x00;
-		xpad->odata[11] = 0x00;
-		xpad->irq_out->transfer_buffer_length = 12;
-		usb_submit_urb(xpad->irq_out, GFP_KERNEL);
+		odata = xpad_get_irq_out_buffer(xpad);
+		if (!odata) {
+			spin_unlock_irqrestore(&xpad->odata_lock, flags);
+			error = -ENOMEM;
+			goto fail4;
+		}
+		odata[0] = 0x08;
+		odata[1] = 0x00;
+		odata[2] = 0x0F;
+		odata[3] = 0xC0;
+		odata[4] = 0x00;
+		odata[5] = 0x00;
+		odata[6] = 0x00;
+		odata[7] = 0x00;
+		odata[8] = 0x00;
+		odata[9] = 0x00;
+		odata[10] = 0x00;
+		odata[11] = 0x00;
+		error = xpad_submit_irq_out_buffer(xpad, odata, 12);
 		spin_unlock_irqrestore(&xpad->odata_lock, flags);
+		if (error)
+			goto fail4;
 	} else {
 		xpad->pad_present = 1;
 		error = xpad_init_input(xpad);
