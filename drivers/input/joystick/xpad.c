@@ -347,6 +347,8 @@ struct usb_xpad {
 	struct xpad_led *led;
 #endif
 
+	int joydev_id;
+
 	char phys[64];			/* physical device path */
 
 	int mapping;			/* map d-pad to buttons or to axes */
@@ -362,6 +364,19 @@ static int xpad_send_ff(struct usb_xpad *xpad, int strong, int weak);
 static void xpad_identify_controller(struct usb_xpad *xpad);
 static int xpad_init_input(struct usb_xpad *xpad);
 static void xpad_deinit_input(struct usb_xpad *xpad);
+
+static void xpad_send_led_command(struct usb_xpad *xpad, int command);
+static int xpad_open(struct input_dev *dev);
+static void xpad_close(struct input_dev *dev);
+static void xpad_set_up_abs(struct input_dev *input_dev, signed short abs);
+static int xpad_init_ff(struct usb_xpad *xpad);
+static int xpad_find_joydev(struct device *dev, void *data)
+{
+	if (strstr(dev_name(dev), "js"))
+		return 1;
+
+	return 0;
+}
 
 /*
  *	xpad_process_packet
@@ -961,7 +976,7 @@ static int xpad_send_ff(struct usb_xpad *xpad, int strong, int weak)
 			odata[9] = weak / 512;
 			odata[10] = 0xFF;
 			odata[11] = 0x00;
-			odata[11] = 0x00;
+			odata[12] = 0x00;
 
 			transfer_length = 13;
 			break;
@@ -1013,19 +1028,35 @@ struct xpad_led {
 
 static void xpad_send_led_command(struct usb_xpad *xpad, int command)
 {
-	unsigned char *odata;
-
 	if (command >= 0 && command < 14) {
 		mutex_lock(&xpad->odata_mutex);
-		odata = xpad_get_irq_out_buffer(xpad);
+		switch (xpad->xtype) {
 
-		if(odata) {
-			odata[0] = 0x01;
-			odata[1] = 0x03;
-			odata[2] = command;
-			xpad_submit_irq_out_buffer(xpad, odata, 3);
+			case XTYPE_XBOX360:
+				xpad->odata[0] = 0x01;
+				xpad->odata[1] = 0x03;
+				xpad->odata[2] = command;
+				xpad->irq_out->transfer_buffer_length = 3;
+				break;
+
+			case XTYPE_XBOX360W:
+				xpad->odata[0] = 0x00;
+				xpad->odata[1] = 0x00;
+				xpad->odata[2] = 0x08;
+				xpad->odata[3] = 0x40 + (command % 0x0e);
+				xpad->odata[4] = 0x00;
+				xpad->odata[5] = 0x00;
+				xpad->odata[6] = 0x00;
+				xpad->odata[7] = 0x00;
+				xpad->odata[8] = 0x00;
+				xpad->odata[9] = 0x00;
+				xpad->odata[10] = 0x00;
+				xpad->odata[11] = 0x00;
+				xpad->irq_out->transfer_buffer_length = 12;
+				break;
 		}
 
+		usb_submit_urb(xpad->irq_out, GFP_KERNEL);
 		mutex_unlock(&xpad->odata_mutex);
 	}
 }
@@ -1059,7 +1090,7 @@ static int xpad_led_probe(struct usb_xpad *xpad)
 	struct led_classdev *led_cdev;
 	int error;
 
-	if (xpad->xtype != XTYPE_XBOX360)
+	if (xpad->xtype != XTYPE_XBOX360 && xpad->xtype != XTYPE_XBOX360W)
 		return 0;
 
 	xpad->led = led = kzalloc(sizeof(struct xpad_led), GFP_KERNEL);
@@ -1232,8 +1263,6 @@ static int xpad_init_input(struct usb_xpad *xpad)
 			xpad_set_up_abs(input_dev, xpad_abs_triggers[i]);
 	}
 
-	xpad_identify_controller(xpad);
-
 	error = xpad_init_ff(xpad);
 	if (error)
 		goto fail_init_ff;
@@ -1243,8 +1272,21 @@ static int xpad_init_input(struct usb_xpad *xpad)
 		goto fail_init_led;
 
 	error = input_register_device(xpad->dev);
-	if (error)
+	if (error == 0)
+	{
+		struct device* joydev_dev = device_find_child(&xpad->dev->dev, NULL, xpad_find_joydev);
+
+		if (joydev_dev) {
+			xpad->joydev_id = MINOR(joydev_dev->devt);
+			xpad_send_led_command(xpad, (xpad->joydev_id % 4) + 2);
+		}
+	}
+	else
+	{
 		goto fail_input_register;
+	}
+
+	xpad_identify_controller(xpad);
 
 	return 0;
 
