@@ -1034,34 +1034,41 @@ struct xpad_led {
 
 static void xpad_send_led_command(struct usb_xpad *xpad, int command)
 {
+	unsigned char *odata;
 	unsigned long flags;
+	u32 transfer_length = 0;
 
 	if (command >= 0 && command < 14) {
 		spin_lock_irqsave(&xpad->odata_lock, flags);
-		switch (xpad->xtype) {
+		odata = xpad_get_irq_out_buffer(xpad);
 
-			case XTYPE_XBOX360:
-				xpad->odata[0] = 0x01;
-				xpad->odata[1] = 0x03;
-				xpad->odata[2] = command;
-				xpad->irq_out->transfer_buffer_length = 3;
-				break;
+		if (odata) {
+			switch (xpad->xtype) {
 
-			case XTYPE_XBOX360W:
-				xpad->odata[0] = 0x00;
-				xpad->odata[1] = 0x00;
-				xpad->odata[2] = 0x08;
-				xpad->odata[3] = 0x40 + (command % 0x0e);
-				xpad->odata[4] = 0x00;
-				xpad->odata[5] = 0x00;
-				xpad->odata[6] = 0x00;
-				xpad->odata[7] = 0x00;
-				xpad->odata[8] = 0x00;
-				xpad->odata[9] = 0x00;
-				xpad->odata[10] = 0x00;
-				xpad->odata[11] = 0x00;
-				xpad->irq_out->transfer_buffer_length = 12;
-				break;
+				case XTYPE_XBOX360:
+					odata[0] = 0x01;
+					odata[1] = 0x03;
+					odata[2] = command;
+					transfer_length = 3;
+					break;
+
+				case XTYPE_XBOX360W:
+					odata[0] = 0x00;
+					odata[1] = 0x00;
+					odata[2] = 0x08;
+					odata[3] = 0x40 + (command % 0x0e);
+					odata[4] = 0x00;
+					odata[5] = 0x00;
+					odata[6] = 0x00;
+					odata[7] = 0x00;
+					odata[8] = 0x00;
+					odata[9] = 0x00;
+					odata[10] = 0x00;
+					odata[11] = 0x00;
+					transfer_length = 12;
+					break;
+			}
+			xpad_submit_irq_out_buffer(xpad, odata, transfer_length);
 		}
 
 		usb_submit_urb(xpad->irq_out, GFP_KERNEL);
