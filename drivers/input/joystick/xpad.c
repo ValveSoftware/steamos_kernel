@@ -1038,6 +1038,9 @@ static void xpad_send_led_command(struct usb_xpad *xpad, int command)
 	unsigned long flags;
 	u32 transfer_length = 0;
 
+	if (xpad->xtype != XTYPE_XBOX360 && xpad->xtype != XTYPE_XBOX360W)
+		return;
+
 	if (command >= 0 && command < 14) {
 		spin_lock_irqsave(&xpad->odata_lock, flags);
 		odata = xpad_get_irq_out_buffer(xpad);
@@ -1071,7 +1074,6 @@ static void xpad_send_led_command(struct usb_xpad *xpad, int command)
 			xpad_submit_irq_out_buffer(xpad, odata, transfer_length);
 		}
 
-		usb_submit_urb(xpad->irq_out, GFP_KERNEL);
 		spin_unlock_irqrestore(&xpad->odata_lock, flags);
 	}
 }
