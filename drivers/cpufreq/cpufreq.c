@@ -1409,9 +1409,10 @@ static int __cpufreq_remove_dev_finish(struct device *dev,
 	unsigned long flags;
 	struct cpufreq_policy *policy;
 
-	read_lock_irqsave(&cpufreq_driver_lock, flags);
+	write_lock_irqsave(&cpufreq_driver_lock, flags);
 	policy = per_cpu(cpufreq_cpu_data, cpu);
-	read_unlock_irqrestore(&cpufreq_driver_lock, flags);
+	per_cpu(cpufreq_cpu_data, cpu) = NULL;
+	write_unlock_irqrestore(&cpufreq_driver_lock, flags);
 
 	if (!policy) {
 		pr_debug("%s: No cpu_data found\n", __func__);
@@ -1466,7 +1467,6 @@ static int __cpufreq_remove_dev_finish(struct device *dev,
 		}
 	}
 
-	per_cpu(cpufreq_cpu_data, cpu) = NULL;
 	return 0;
 }
 
@@ -1717,15 +1717,18 @@ void cpufreq_resume(void)
 		    || __cpufreq_governor(policy, CPUFREQ_GOV_LIMITS))
 			pr_err("%s: Failed to start governor for policy: %p\n",
 				__func__, policy);
-
-		/*
-		 * schedule call cpufreq_update_policy() for boot CPU, i.e. last
-		 * policy in list. It will verify that the current freq is in
-		 * sync with what we believe it to be.
-		 */
-		if (list_is_last(&policy->policy_list, &cpufreq_policy_list))
-			schedule_work(&policy->update);
 	}
+
+	/*
+	 * schedule call cpufreq_update_policy() for first-online CPU, as that
+	 * wouldn't be hotplugged-out on suspend. It will verify that the
+	 * current freq is in sync with what we believe it to be.
+	 */
+	policy = cpufreq_cpu_get_raw(cpumask_first(cpu_online_mask));
+	if (WARN_ON(!policy))
+		return;
+
+	schedule_work(&policy->update);
 }
 
 /**

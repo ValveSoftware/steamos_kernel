@@ -3142,27 +3142,26 @@ static int vb2_thread(void *data)
 			prequeue--;
 		} else {
 			call_void_qop(q, wait_finish, q);
-			ret = vb2_internal_dqbuf(q, &fileio->b, 0);
+			if (!threadio->stop)
+				ret = vb2_internal_dqbuf(q, &fileio->b, 0);
 			call_void_qop(q, wait_prepare, q);
 			dprintk(5, "file io: vb2_dqbuf result: %d\n", ret);
 		}
-		if (threadio->stop)
-			break;
-		if (ret)
+		if (ret || threadio->stop)
 			break;
 		try_to_freeze();
 
 		vb = q->bufs[fileio->b.index];
 		if (!(fileio->b.flags & V4L2_BUF_FLAG_ERROR))
-			ret = threadio->fnc(vb, threadio->priv);
-		if (ret)
-			break;
+			if (threadio->fnc(vb, threadio->priv))
+				break;
 		call_void_qop(q, wait_finish, q);
 		if (set_timestamp)
 			v4l2_get_timestamp(&fileio->b.timestamp);
-		ret = vb2_internal_qbuf(q, &fileio->b);
+		if (!threadio->stop)
+			ret = vb2_internal_qbuf(q, &fileio->b);
 		call_void_qop(q, wait_prepare, q);
-		if (ret)
+		if (ret || threadio->stop)
 			break;
 	}
 
@@ -3227,18 +3226,13 @@ int vb2_thread_stop(struct vb2_queue *q)
 
 	if (threadio == NULL)
 		return 0;
-	call_void_qop(q, wait_finish, q);
 	threadio->stop = true;
-	vb2_internal_streamoff(q, q->type);
-	call_void_qop(q, wait_prepare, q);
-	q->fileio = NULL;
-	fileio->req.count = 0;
-	vb2_reqbufs(q, &fileio->req);
-	kfree(fileio);
+	/* Wake up all pending sleeps in the thread */
+	vb2_queue_error(q);
 	err = kthread_stop(threadio->thread);
+	__vb2_cleanup_fileio(q);
 	threadio->thread = NULL;
 	kfree(threadio);
-	q->fileio = NULL;
 	q->threadio = NULL;
 	return err;
 }

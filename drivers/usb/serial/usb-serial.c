@@ -940,8 +940,9 @@ static int usb_serial_probe(struct usb_interface *interface,
 		port = serial->port[i];
 		if (kfifo_alloc(&port->write_fifo, PAGE_SIZE, GFP_KERNEL))
 			goto probe_error;
-		buffer_size = max_t(int, serial->type->bulk_out_size,
-						usb_endpoint_maxp(endpoint));
+		buffer_size = serial->type->bulk_out_size;
+		if (!buffer_size)
+			buffer_size = usb_endpoint_maxp(endpoint);
 		port->bulk_out_size = buffer_size;
 		port->bulk_out_endpointAddress = endpoint->bEndpointAddress;
 
@@ -1289,6 +1290,7 @@ static void __exit usb_serial_exit(void)
 	tty_unregister_driver(usb_serial_tty_driver);
 	put_tty_driver(usb_serial_tty_driver);
 	bus_unregister(&usb_serial_bus_type);
+	idr_destroy(&serial_minors);
 }
 
 
