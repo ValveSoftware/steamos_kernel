@@ -835,6 +835,7 @@ struct sony_sc {
 	__u8 led_delay_on[MAX_LEDS];
 	__u8 led_delay_off[MAX_LEDS];
 	__u8 led_count;
+	__u8 sixaxis_initialized;
 };
 
 static __u8 *sixaxis_fixup(struct hid_device *hdev, __u8 *rdesc,
@@ -958,6 +959,17 @@ static void sixaxis_parse_report(struct sony_sc *sc, __u8 *rd, int size)
 	sc->battery_capacity = battery_capacity;
 	sc->battery_charging = battery_charging;
 	spin_unlock_irqrestore(&sc->lock, flags);
+
+	/*
+	 * On USB, the Sixaxis LEDs flash until the PS button is pressed
+	 * at which time the the first input report is sent.
+	 * Schedule an output report at the first input report to set the
+	 * state of the LEDs so they don't flash indefinitly.
+	 */
+	if (!sc->sixaxis_initialized) {
+		sc->sixaxis_initialized = 1;
+		schedule_work(&sc->state_worker);
+	}
 }
 
 static void dualshock4_parse_report(struct sony_sc *sc, __u8 *rd, int size)
@@ -1042,6 +1054,17 @@ static int sony_raw_event(struct hid_device *hdev, struct hid_report *report,
 	 * has to be BYTE_SWAPPED before passing up to joystick interface
 	 */
 	if ((sc->quirks & SIXAXIS_CONTROLLER) && rd[0] == 0x01 && size == 49) {
+		/*
+		 * When connected via Bluetooth the Sixaxis occasionally sends
+		 * a report with the second byte 0xff and the rest zeroed.
+		 *
+		 * This report does not reflect the actual state of the
+		 * controller and must be ignored to avoid generating false
+		 * input events.
+		 */
+		if (rd[1] == 0xff)
+			return -EINVAL;
+
 		swap(rd[41], rd[42]);
 		swap(rd[43], rd[44]);
 		swap(rd[45], rd[46]);
@@ -1230,6 +1253,27 @@ static void sixaxis_set_leds_from_id(int id, __u8 values[MAX_LEDS])
 
 	id %= 10;
 	memcpy(values, sixaxis_leds[id], sizeof(sixaxis_leds[id]));
+}
+
+static int sony_find_joydev(struct device *dev, void *data)
+{
+	if (strstr(dev_name(dev), "js"))
+		return 1;
+
+	return 0;
+}
+
+static int sony_get_js_number(struct sony_sc *sc)
+{
+	struct hid_input *hidinput = list_entry(sc->hdev->inputs.next,
+						struct hid_input, list);
+	struct input_dev *input_dev = hidinput->input;
+	struct device* joydev_dev = device_find_child(&input_dev->dev, NULL, sony_find_joydev);
+
+	if (joydev_dev)
+		return MINOR(joydev_dev->devt);
+
+	return -ENOENT;
 }
 
 static void dualshock4_set_leds_from_id(int id, __u8 values[MAX_LEDS])
@@ -1423,6 +1467,7 @@ static int sony_leds_init(struct sony_sc *sc)
 {
 	struct hid_device *hdev = sc->hdev;
 	int n, ret = 0;
+	int led_value;
 	int use_ds4_names;
 	struct led_classdev *led;
 	size_t name_sz;
@@ -1437,6 +1482,14 @@ static int sony_leds_init(struct sony_sc *sc)
 
 	BUG_ON(!(sc->quirks & SONY_LED_SUPPORT));
 
+	/*
+	 * Try to use the joystick number to set the LED values.
+	 * If it's not available, use the device ID.
+	 */
+	led_value = sony_get_js_number(sc);
+	if (led_value < 0)
+		led_value = sc->device_id;
+
 	if (sc->quirks & BUZZ_CONTROLLER) {
 		sc->led_count = 4;
 		use_ds4_names = 0;
@@ -1446,7 +1499,7 @@ static int sony_leds_init(struct sony_sc *sc)
 		if (!hid_validate_values(hdev, HID_OUTPUT_REPORT, 0, 0, 7))
 			return -ENODEV;
 	} else if (sc->quirks & DUALSHOCK4_CONTROLLER) {
-		dualshock4_set_leds_from_id(sc->device_id, initial_values);
+		dualshock4_set_leds_from_id(led_value, initial_values);
 		initial_values[3] = 1;
 		sc->led_count = 4;
 		memset(max_brightness, 255, 3);
@@ -1455,7 +1508,7 @@ static int sony_leds_init(struct sony_sc *sc)
 		name_len = 0;
 		name_fmt = "%s:%s";
 	} else {
-		sixaxis_set_leds_from_id(sc->device_id, initial_values);
+		sixaxis_set_leds_from_id(led_value, initial_values);
 		sc->led_count = 4;
 		memset(use_hw_blink, 1, 4);
 		use_ds4_names = 0;
@@ -1467,8 +1520,15 @@ static int sony_leds_init(struct sony_sc *sc)
 	 * Clear LEDs as we have no way of reading their initial state. This is
 	 * only relevant if the driver is loaded after somebody actively set the
 	 * LEDs to on
+	 *
+	 * Don't bother with the Sixaxis on USB because the LEDs will just start
+	 * flashing again.  Just store the values for now and they will be set
+	 * on the controller when the PS button is pushed.
 	 */
-	sony_set_leds(sc, initial_values, sc->led_count);
+	if (!(sc->quirks & SIXAXIS_CONTROLLER_USB))
+		sony_set_leds(sc, initial_values, sc->led_count);
+	else
+		memcpy(sc->led_state, initial_values, sizeof(initial_values));
 
 	name_sz = strlen(dev_name(&hdev->dev)) + name_len + 1;
 
@@ -1590,7 +1650,7 @@ static void dualshock4_state_worker(struct work_struct *work)
 	} else {
 		memset(buf, 0, DS4_REPORT_0x11_SIZE);
 		buf[0] = 0x11;
-		buf[1] = 0xB0;
+		buf[1] = 0x80;
 		buf[3] = 0x0F;
 		offset = 6;
 	}
