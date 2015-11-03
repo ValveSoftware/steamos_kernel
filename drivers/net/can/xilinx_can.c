@@ -509,10 +509,11 @@ static int xcan_rx(struct net_device *ndev)
 			cf->can_id |= CAN_RTR_FLAG;
 	}
 
-	if (!(id_xcan & XCAN_IDR_SRR_MASK)) {
-		data[0] = priv->read_reg(priv, XCAN_RXFIFO_DW1_OFFSET);
-		data[1] = priv->read_reg(priv, XCAN_RXFIFO_DW2_OFFSET);
+	/* DW1/DW2 must always be read to remove message from RXFIFO */
+	data[0] = priv->read_reg(priv, XCAN_RXFIFO_DW1_OFFSET);
+	data[1] = priv->read_reg(priv, XCAN_RXFIFO_DW2_OFFSET);
 
+	if (!(cf->can_id & CAN_RTR_FLAG)) {
 		/* Change Xilinx CAN data format to socketCAN data format */
 		if (cf->can_dlc > 0)
 			*(__be32 *)(cf->data) = cpu_to_be32(data[0]);
@@ -1185,7 +1186,7 @@ static int xcan_remove(struct platform_device *pdev)
 }
 
 /* Match table for OF platform binding */
-static struct of_device_id xcan_of_match[] = {
+static const struct of_device_id xcan_of_match[] = {
 	{ .compatible = "xlnx,zynq-can-1.0", },
 	{ .compatible = "xlnx,axi-can-1.00.a", },
 	{ /* end of list */ },
@@ -1196,7 +1197,6 @@ static struct platform_driver xcan_driver = {
 	.probe = xcan_probe,
 	.remove	= xcan_remove,
 	.driver	= {
-		.owner = THIS_MODULE,
 		.name = DRIVER_NAME,
 		.pm = &xcan_dev_pm_ops,
 		.of_match_table	= xcan_of_match,

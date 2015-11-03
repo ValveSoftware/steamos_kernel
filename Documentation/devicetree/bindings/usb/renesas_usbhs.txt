@@ -14,6 +14,9 @@ Optional properties:
 			 function should be enabled
   - phys: phandle + phy specifier pair
   - phy-names: must be "usb"
+  - dmas: Must contain a list of references to DMA specifiers.
+  - dma-names : named "ch%d", where %d is the channel number ranging from zero
+                to the number of channels (DnFIFOs) minus one.
 
 Example:
 	usbhs: usb@e6590000 {

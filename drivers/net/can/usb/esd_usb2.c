@@ -139,7 +139,7 @@ struct tx_msg {
 	u8 cmd;
 	u8 net;
 	u8 dlc;
-	__le32 hnd;
+	u32 hnd;	/* opaque handle, not used by device */
 	__le32 id; /* upper 3 bits contain flags */
 	u8 data[8];
 };
@@ -149,7 +149,7 @@ struct tx_done_msg {
 	u8 cmd;
 	u8 net;
 	u8 status;
-	__le32 hnd;
+	u32 hnd;	/* opaque handle, not used by device */
 	__le32 ts;
 };
 
@@ -250,6 +250,7 @@ static void esd_usb2_rx_event(struct esd_usb2_net_priv *priv,
 			case ESD_BUSSTATE_BUSOFF:
 				priv->can.state = CAN_STATE_BUS_OFF;
 				cf->can_id |= CAN_ERR_BUSOFF;
+				priv->can.can_stats.bus_off++;
 				can_bus_off(priv->netdev);
 				break;
 			case ESD_BUSSTATE_WARN:

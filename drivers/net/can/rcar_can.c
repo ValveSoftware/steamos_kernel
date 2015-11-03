@@ -331,6 +331,7 @@ static void rcar_can_error(struct net_device *ndev)
 		priv->can.state = CAN_STATE_BUS_OFF;
 		/* Clear interrupt condition */
 		writeb(~RCAR_CAN_EIFR_BOEIF, &priv->regs->eifr);
+		priv->can.can_stats.bus_off++;
 		can_bus_off(ndev);
 		if (skb)
 			cf->can_id |= CAN_ERR_BUSOFF;
@@ -907,7 +908,6 @@ MODULE_DEVICE_TABLE(of, rcar_can_of_table);
 static struct platform_driver rcar_can_driver = {
 	.driver = {
 		.name = RCAR_CAN_DRV_NAME,
-		.owner = THIS_MODULE,
 		.of_match_table = of_match_ptr(rcar_can_of_table),
 		.pm = &rcar_can_pm_ops,
 	},

@@ -31,6 +31,7 @@
 #include <asm/bootinfo.h>
 #include <asm/bugs.h>
 #include <asm/cache.h>
+#include <asm/cdmm.h>
 #include <asm/cpu.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
@@ -82,14 +83,14 @@ static struct resource data_resource = { .name = "Kernel data", };
 
 static void *detect_magic __initdata = detect_memory_region;
 
-void __init add_memory_region(phys_t start, phys_t size, long type)
+void __init add_memory_region(phys_addr_t start, phys_addr_t size, long type)
 {
 	int x = boot_mem_map.nr_map;
 	int i;
 
 	/* Sanity check */
 	if (start + size < start) {
-		pr_warning("Trying to add an invalid memory region, skipped\n");
+		pr_warn("Trying to add an invalid memory region, skipped\n");
 		return;
 	}
 
@@ -127,10 +128,10 @@ void __init add_memory_region(phys_t start, phys_t size, long type)
 	boot_mem_map.nr_map++;
 }
 
-void __init detect_memory_region(phys_t start, phys_t sz_min, phys_t sz_max)
+void __init detect_memory_region(phys_addr_t start, phys_addr_t sz_min, phys_addr_t sz_max)
 {
 	void *dm = &detect_magic;
-	phys_t size;
+	phys_addr_t size;
 
 	for (size = sz_min; size < sz_max; size <<= 1) {
 		if (!memcmp(dm, dm + size, sizeof(detect_magic)))
@@ -493,7 +494,7 @@ static int usermem __initdata;
 
 static int __init early_parse_mem(char *p)
 {
-	phys_t start, size;
+	phys_addr_t start, size;
 
 	/*
 	 * If a user specifies memory size, we
@@ -545,9 +546,9 @@ static int __init early_parse_elfcorehdr(char *p)
 early_param("elfcorehdr", early_parse_elfcorehdr);
 #endif
 
-static void __init arch_mem_addpart(phys_t mem, phys_t end, int type)
+static void __init arch_mem_addpart(phys_addr_t mem, phys_addr_t end, int type)
 {
-	phys_t size;
+	phys_addr_t size;
 	int i;
 
 	size = end - mem;
@@ -763,6 +764,7 @@ void __init setup_arch(char **cmdline_p)
 	cpu_probe();
 	prom_init();
 
+	setup_early_fdc_console();
 #ifdef CONFIG_EARLY_PRINTK
 	setup_early_printk();
 #endif

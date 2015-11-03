@@ -257,7 +257,7 @@ static int svc_sendto(struct svc_rqst *rqstp, struct xdr_buf *xdr)
 
 		svc_set_cmsg_data(rqstp, cmh);
 
-		if (sock_sendmsg(sock, &msg, 0) < 0)
+		if (sock_sendmsg(sock, &msg) < 0)
 			goto out;
 	}
 
@@ -1145,7 +1145,10 @@ static int svc_tcp_recvfrom(struct svc_rqst *rqstp)
 
 	rqstp->rq_xprt_ctxt   = NULL;
 	rqstp->rq_prot	      = IPPROTO_TCP;
-	rqstp->rq_local	      = !!test_bit(XPT_LOCAL, &svsk->sk_xprt.xpt_flags);
+	if (test_bit(XPT_LOCAL, &svsk->sk_xprt.xpt_flags))
+		set_bit(RQ_LOCAL, &rqstp->rq_flags);
+	else
+		clear_bit(RQ_LOCAL, &rqstp->rq_flags);
 
 	p = (__be32 *)rqstp->rq_arg.head[0].iov_base;
 	calldir = p[1];

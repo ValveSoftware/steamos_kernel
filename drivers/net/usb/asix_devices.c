@@ -487,8 +487,7 @@ static int ax88772_bind(struct usbnet *dev, struct usb_interface *intf)
 
 static void ax88772_unbind(struct usbnet *dev, struct usb_interface *intf)
 {
-	if (dev->driver_priv)
-		kfree(dev->driver_priv);
+	kfree(dev->driver_priv);
 }
 
 static const struct ethtool_ops ax88178_ethtool_ops = {
@@ -978,6 +977,10 @@ static const struct usb_device_id	products [] = {
 }, {
 	// Sitecom LN-031 "USB 2.0 10/100/1000 Ethernet adapter"
 	USB_DEVICE (0x0df6, 0x0056),
+	.driver_info =  (unsigned long) &ax88178_info,
+}, {
+	// Sitecom LN-028 "USB 2.0 10/100/1000 Ethernet adapter"
+	USB_DEVICE (0x0df6, 0x061c),
 	.driver_info =  (unsigned long) &ax88178_info,
 }, {
 	// corega FEther USB2-TX

@@ -17,7 +17,7 @@
 #define UNCORE_PCI_DEV_TYPE(data)	((data >> 8) & 0xff)
 #define UNCORE_PCI_DEV_IDX(data)	(data & 0xff)
 #define UNCORE_EXTRA_PCI_DEV		0xff
-#define UNCORE_EXTRA_PCI_DEV_MAX	2
+#define UNCORE_EXTRA_PCI_DEV_MAX	3
 
 /* support up to 8 sockets */
 #define UNCORE_SOCKET_MAX		8
@@ -97,6 +97,7 @@ struct intel_uncore_box {
 	atomic_t refcnt;
 	struct perf_event *events[UNCORE_PMC_IDX_MAX];
 	struct perf_event *event_list[UNCORE_PMC_IDX_MAX];
+	struct event_constraint *event_constraint[UNCORE_PMC_IDX_MAX];
 	unsigned long active_mask[BITS_TO_LONGS(UNCORE_PMC_IDX_MAX)];
 	u64 tags[UNCORE_PMC_IDX_MAX];
 	struct pci_dev *pci_dev;

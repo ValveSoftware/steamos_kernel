@@ -426,7 +426,7 @@ static inline void emit_mod(unsigned int dst, unsigned int src,
 		u32 *p = &ctx->target[ctx->idx];
 		uasm_i_divu(&p, dst, src);
 		p = &ctx->target[ctx->idx + 1];
-		uasm_i_mflo(&p, dst);
+		uasm_i_mfhi(&p, dst);
 	}
 	ctx->idx += 2; /* 2 insts */
 }
@@ -681,11 +681,7 @@ static unsigned int get_stack_depth(struct jit_ctx *ctx)
 		sp_off += config_enabled(CONFIG_64BIT) ?
 			(ARGS_USED_BY_JIT + 1) * RSIZE : RSIZE;
 
-	/*
-	 * Subtract the bytes for the last registers since we only care about
-	 * the location on the stack pointer.
-	 */
-	return sp_off - RSIZE;
+	return sp_off;
 }
 
 static void build_prologue(struct jit_ctx *ctx)
@@ -971,7 +967,7 @@ load_ind:
 			break;
 		case BPF_ALU | BPF_MOD | BPF_K:
 			/* A %= k */
-			if (k == 1 || optimize_div(&k)) {
+			if (k == 1) {
 				ctx->flags |= SEEN_A;
 				emit_jit_reg_move(r_A, r_zero, ctx);
 			} else {
@@ -1388,7 +1384,7 @@ out:
 void bpf_jit_free(struct bpf_prog *fp)
 {
 	if (fp->jited)
-		module_free(NULL, fp->bpf_func);
+		module_memfree(fp->bpf_func);
 
 	bpf_prog_unlock_free(fp);
 }

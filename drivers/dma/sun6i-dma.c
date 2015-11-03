@@ -18,30 +18,13 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/of_dma.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
 #include <linux/slab.h>
 #include <linux/types.h>
 
 #include "virt-dma.h"
-
-/*
- * There's 16 physical channels that can work in parallel.
- *
- * However we have 30 different endpoints for our requests.
- *
- * Since the channels are able to handle only an unidirectional
- * transfer, we need to allocate more virtual channels so that
- * everyone can grab one channel.
- *
- * Some devices can't work in both direction (mostly because it
- * wouldn't make sense), so we have a bit fewer virtual channels than
- * 2 channels per endpoints.
- */
-
-#define NR_MAX_CHANNELS		16
-#define NR_MAX_REQUESTS		30
-#define NR_MAX_VCHANS		53
 
 /*
  * Common registers
@@ -58,6 +41,12 @@
 #define DMA_IRQ_STAT(x)		((x) * 0x04 + 0x10)
 
 #define DMA_STAT		0x30
+
+/*
+ * sun8i specific registers
+ */
+#define SUN8I_DMA_GATE		0x20
+#define SUN8I_DMA_GATE_ENABLE	0x4
 
 /*
  * Channels specific registers
@@ -100,6 +89,19 @@
 #define LLI_LAST_ITEM	0xfffff800
 #define NORMAL_WAIT	8
 #define DRQ_SDRAM	1
+
+/*
+ * Hardware channels / ports representation
+ *
+ * The hardware is used in several SoCs, with differing numbers
+ * of channels and endpoints. This structure ties those numbers
+ * to a certain compatible string.
+ */
+struct sun6i_dma_config {
+	u32 nr_max_channels;
+	u32 nr_max_requests;
+	u32 nr_max_vchans;
+};
 
 /*
  * Hardware representation of the LLI
@@ -159,6 +161,7 @@ struct sun6i_dma_dev {
 	struct dma_pool		*pool;
 	struct sun6i_pchan	*pchans;
 	struct sun6i_vchan	*vchans;
+	const struct sun6i_dma_config *cfg;
 };
 
 static struct device *chan2dev(struct dma_chan *chan)
@@ -352,38 +355,6 @@ static void sun6i_dma_free_desc(struct virt_dma_desc *vd)
 	kfree(txd);
 }
 
-static int sun6i_dma_terminate_all(struct sun6i_vchan *vchan)
-{
-	struct sun6i_dma_dev *sdev = to_sun6i_dma_dev(vchan->vc.chan.device);
-	struct sun6i_pchan *pchan = vchan->phy;
-	unsigned long flags;
-	LIST_HEAD(head);
-
-	spin_lock(&sdev->lock);
-	list_del_init(&vchan->node);
-	spin_unlock(&sdev->lock);
-
-	spin_lock_irqsave(&vchan->vc.lock, flags);
-
-	vchan_get_all_descriptors(&vchan->vc, &head);
-
-	if (pchan) {
-		writel(DMA_CHAN_ENABLE_STOP, pchan->base + DMA_CHAN_ENABLE);
-		writel(DMA_CHAN_PAUSE_RESUME, pchan->base + DMA_CHAN_PAUSE);
-
-		vchan->phy = NULL;
-		pchan->vchan = NULL;
-		pchan->desc = NULL;
-		pchan->done = NULL;
-	}
-
-	spin_unlock_irqrestore(&vchan->vc.lock, flags);
-
-	vchan_dma_desc_free_list(&vchan->vc, &head);
-
-	return 0;
-}
-
 static int sun6i_dma_start_desc(struct sun6i_vchan *vchan)
 {
 	struct sun6i_dma_dev *sdev = to_sun6i_dma_dev(vchan->vc.chan.device);
@@ -426,6 +397,7 @@ static int sun6i_dma_start_desc(struct sun6i_vchan *vchan)
 static void sun6i_dma_tasklet(unsigned long data)
 {
 	struct sun6i_dma_dev *sdev = (struct sun6i_dma_dev *)data;
+	const struct sun6i_dma_config *cfg = sdev->cfg;
 	struct sun6i_vchan *vchan;
 	struct sun6i_pchan *pchan;
 	unsigned int pchan_alloc = 0;
@@ -453,7 +425,7 @@ static void sun6i_dma_tasklet(unsigned long data)
 	}
 
 	spin_lock_irq(&sdev->lock);
-	for (pchan_idx = 0; pchan_idx < NR_MAX_CHANNELS; pchan_idx++) {
+	for (pchan_idx = 0; pchan_idx < cfg->nr_max_channels; pchan_idx++) {
 		pchan = &sdev->pchans[pchan_idx];
 
 		if (pchan->vchan || list_empty(&sdev->pending))
@@ -474,7 +446,7 @@ static void sun6i_dma_tasklet(unsigned long data)
 	}
 	spin_unlock_irq(&sdev->lock);
 
-	for (pchan_idx = 0; pchan_idx < NR_MAX_CHANNELS; pchan_idx++) {
+	for (pchan_idx = 0; pchan_idx < cfg->nr_max_channels; pchan_idx++) {
 		if (!(pchan_alloc & BIT(pchan_idx)))
 			continue;
 
@@ -496,7 +468,7 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
 	int i, j, ret = IRQ_NONE;
 	u32 status;
 
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < sdev->cfg->nr_max_channels / DMA_IRQ_CHAN_NR; i++) {
 		status = readl(sdev->base + DMA_IRQ_STAT(i));
 		if (!status)
 			continue;
@@ -506,7 +478,7 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
 
 		writel(status, sdev->base + DMA_IRQ_STAT(i));
 
-		for (j = 0; (j < 8) && status; j++) {
+		for (j = 0; (j < DMA_IRQ_CHAN_NR) && status; j++) {
 			if (status & DMA_IRQ_QUEUE) {
 				pchan = sdev->pchans + j;
 				vchan = pchan->vchan;
@@ -519,7 +491,7 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
 				}
 			}
 
-			status = status >> 4;
+			status = status >> DMA_IRQ_CHAN_WIDTH;
 		}
 
 		if (!atomic_read(&sdev->tasklet_shutdown))
@@ -671,57 +643,92 @@ err_lli_free:
 	return NULL;
 }
 
-static int sun6i_dma_control(struct dma_chan *chan, enum dma_ctrl_cmd cmd,
-		       unsigned long arg)
+static int sun6i_dma_config(struct dma_chan *chan,
+			    struct dma_slave_config *config)
+{
+	struct sun6i_vchan *vchan = to_sun6i_vchan(chan);
+
+	memcpy(&vchan->cfg, config, sizeof(*config));
+
+	return 0;
+}
+
+static int sun6i_dma_pause(struct dma_chan *chan)
+{
+	struct sun6i_dma_dev *sdev = to_sun6i_dma_dev(chan->device);
+	struct sun6i_vchan *vchan = to_sun6i_vchan(chan);
+	struct sun6i_pchan *pchan = vchan->phy;
+
+	dev_dbg(chan2dev(chan), "vchan %p: pause\n", &vchan->vc);
+
+	if (pchan) {
+		writel(DMA_CHAN_PAUSE_PAUSE,
+		       pchan->base + DMA_CHAN_PAUSE);
+	} else {
+		spin_lock(&sdev->lock);
+		list_del_init(&vchan->node);
+		spin_unlock(&sdev->lock);
+	}
+
+	return 0;
+}
+
+static int sun6i_dma_resume(struct dma_chan *chan)
 {
 	struct sun6i_dma_dev *sdev = to_sun6i_dma_dev(chan->device);
 	struct sun6i_vchan *vchan = to_sun6i_vchan(chan);
 	struct sun6i_pchan *pchan = vchan->phy;
 	unsigned long flags;
-	int ret = 0;
 
-	switch (cmd) {
-	case DMA_RESUME:
-		dev_dbg(chan2dev(chan), "vchan %p: resume\n", &vchan->vc);
+	dev_dbg(chan2dev(chan), "vchan %p: resume\n", &vchan->vc);
 
-		spin_lock_irqsave(&vchan->vc.lock, flags);
+	spin_lock_irqsave(&vchan->vc.lock, flags);
 
-		if (pchan) {
-			writel(DMA_CHAN_PAUSE_RESUME,
-			       pchan->base + DMA_CHAN_PAUSE);
-		} else if (!list_empty(&vchan->vc.desc_issued)) {
-			spin_lock(&sdev->lock);
-			list_add_tail(&vchan->node, &sdev->pending);
-			spin_unlock(&sdev->lock);
-		}
-
-		spin_unlock_irqrestore(&vchan->vc.lock, flags);
-		break;
-
-	case DMA_PAUSE:
-		dev_dbg(chan2dev(chan), "vchan %p: pause\n", &vchan->vc);
-
-		if (pchan) {
-			writel(DMA_CHAN_PAUSE_PAUSE,
-			       pchan->base + DMA_CHAN_PAUSE);
-		} else {
-			spin_lock(&sdev->lock);
-			list_del_init(&vchan->node);
-			spin_unlock(&sdev->lock);
-		}
-		break;
-
-	case DMA_TERMINATE_ALL:
-		ret = sun6i_dma_terminate_all(vchan);
-		break;
-	case DMA_SLAVE_CONFIG:
-		memcpy(&vchan->cfg, (void *)arg, sizeof(struct dma_slave_config));
-		break;
-	default:
-		ret = -ENXIO;
-		break;
+	if (pchan) {
+		writel(DMA_CHAN_PAUSE_RESUME,
+		       pchan->base + DMA_CHAN_PAUSE);
+	} else if (!list_empty(&vchan->vc.desc_issued)) {
+		spin_lock(&sdev->lock);
+		list_add_tail(&vchan->node, &sdev->pending);
+		spin_unlock(&sdev->lock);
 	}
-	return ret;
+
+	spin_unlock_irqrestore(&vchan->vc.lock, flags);
+
+	return 0;
+}
+
+static int sun6i_dma_terminate_all(struct dma_chan *chan)
+{
+	struct sun6i_dma_dev *sdev = to_sun6i_dma_dev(chan->device);
+	struct sun6i_vchan *vchan = to_sun6i_vchan(chan);
+	struct sun6i_pchan *pchan = vchan->phy;
+	unsigned long flags;
+	LIST_HEAD(head);
+
+	spin_lock(&sdev->lock);
+	list_del_init(&vchan->node);
+	spin_unlock(&sdev->lock);
+
+	spin_lock_irqsave(&vchan->vc.lock, flags);
+
+	vchan_get_all_descriptors(&vchan->vc, &head);
+
+	if (pchan) {
+		writel(DMA_CHAN_ENABLE_STOP, pchan->base + DMA_CHAN_ENABLE);
+		writel(DMA_CHAN_PAUSE_RESUME, pchan->base + DMA_CHAN_PAUSE);
+
+		vchan->phy = NULL;
+		pchan->vchan = NULL;
+		pchan->desc = NULL;
+		pchan->done = NULL;
+	}
+
+	spin_unlock_irqrestore(&vchan->vc.lock, flags);
+
+	vchan_dma_desc_free_list(&vchan->vc, &head);
+
+	return 0;
 }
 
 static enum dma_status sun6i_dma_tx_status(struct dma_chan *chan,
@@ -789,11 +796,6 @@ static void sun6i_dma_issue_pending(struct dma_chan *chan)
 	spin_unlock_irqrestore(&vchan->vc.lock, flags);
 }
 
-static int sun6i_dma_alloc_chan_resources(struct dma_chan *chan)
-{
-	return 0;
-}
-
 static void sun6i_dma_free_chan_resources(struct dma_chan *chan)
 {
 	struct sun6i_dma_dev *sdev = to_sun6i_dma_dev(chan->device);
@@ -815,7 +817,7 @@ static struct dma_chan *sun6i_dma_of_xlate(struct of_phandle_args *dma_spec,
 	struct dma_chan *chan;
 	u8 port = dma_spec->args[0];
 
-	if (port > NR_MAX_REQUESTS)
+	if (port > sdev->cfg->nr_max_requests)
 		return NULL;
 
 	chan = dma_get_any_slave_channel(&sdev->slave);
@@ -848,7 +850,7 @@ static inline void sun6i_dma_free(struct sun6i_dma_dev *sdev)
 {
 	int i;
 
-	for (i = 0; i < NR_MAX_VCHANS; i++) {
+	for (i = 0; i < sdev->cfg->nr_max_vchans; i++) {
 		struct sun6i_vchan *vchan = &sdev->vchans[i];
 
 		list_del(&vchan->vc.chan.device_node);
@@ -856,8 +858,48 @@ static inline void sun6i_dma_free(struct sun6i_dma_dev *sdev)
 	}
 }
 
+/*
+ * For A31:
+ *
+ * There's 16 physical channels that can work in parallel.
+ *
+ * However we have 30 different endpoints for our requests.
+ *
+ * Since the channels are able to handle only an unidirectional
+ * transfer, we need to allocate more virtual channels so that
+ * everyone can grab one channel.
+ *
+ * Some devices can't work in both direction (mostly because it
+ * wouldn't make sense), so we have a bit fewer virtual channels than
+ * 2 channels per endpoints.
+ */
+
+static struct sun6i_dma_config sun6i_a31_dma_cfg = {
+	.nr_max_channels = 16,
+	.nr_max_requests = 30,
+	.nr_max_vchans   = 53,
+};
+
+/*
+ * The A23 only has 8 physical channels, a maximum DRQ port id of 24,
+ * and a total of 37 usable source and destination endpoints.
+ */
+
+static struct sun6i_dma_config sun8i_a23_dma_cfg = {
+	.nr_max_channels = 8,
+	.nr_max_requests = 24,
+	.nr_max_vchans   = 37,
+};
+
+static const struct of_device_id sun6i_dma_match[] = {
+	{ .compatible = "allwinner,sun6i-a31-dma", .data = &sun6i_a31_dma_cfg },
+	{ .compatible = "allwinner,sun8i-a23-dma", .data = &sun8i_a23_dma_cfg },
+	{ /* sentinel */ }
+};
+
 static int sun6i_dma_probe(struct platform_device *pdev)
 {
+	const struct of_device_id *device;
 	struct sun6i_dma_dev *sdc;
 	struct resource *res;
 	int ret, i;
@@ -865,6 +907,11 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 	sdc = devm_kzalloc(&pdev->dev, sizeof(*sdc), GFP_KERNEL);
 	if (!sdc)
 		return -ENOMEM;
+
+	device = of_match_device(sun6i_dma_match, &pdev->dev);
+	if (!device)
+		return -ENODEV;
+	sdc->cfg = device->data;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	sdc->base = devm_ioremap_resource(&pdev->dev, res);
@@ -905,38 +952,47 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 	dma_cap_set(DMA_SLAVE, sdc->slave.cap_mask);
 
 	INIT_LIST_HEAD(&sdc->slave.channels);
-	sdc->slave.device_alloc_chan_resources	= sun6i_dma_alloc_chan_resources;
 	sdc->slave.device_free_chan_resources	= sun6i_dma_free_chan_resources;
 	sdc->slave.device_tx_status		= sun6i_dma_tx_status;
 	sdc->slave.device_issue_pending		= sun6i_dma_issue_pending;
 	sdc->slave.device_prep_slave_sg		= sun6i_dma_prep_slave_sg;
 	sdc->slave.device_prep_dma_memcpy	= sun6i_dma_prep_dma_memcpy;
-	sdc->slave.device_control		= sun6i_dma_control;
-	sdc->slave.chancnt			= NR_MAX_VCHANS;
 	sdc->slave.copy_align			= 4;
-
+	sdc->slave.device_config		= sun6i_dma_config;
+	sdc->slave.device_pause			= sun6i_dma_pause;
+	sdc->slave.device_resume		= sun6i_dma_resume;
+	sdc->slave.device_terminate_all		= sun6i_dma_terminate_all;
+	sdc->slave.src_addr_widths		= BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |
+						  BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
+						  BIT(DMA_SLAVE_BUSWIDTH_4_BYTES);
+	sdc->slave.dst_addr_widths		= BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |
+						  BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
+						  BIT(DMA_SLAVE_BUSWIDTH_4_BYTES);
+	sdc->slave.directions			= BIT(DMA_DEV_TO_MEM) |
+						  BIT(DMA_MEM_TO_DEV);
+	sdc->slave.residue_granularity		= DMA_RESIDUE_GRANULARITY_BURST;
 	sdc->slave.dev = &pdev->dev;
 
-	sdc->pchans = devm_kcalloc(&pdev->dev, NR_MAX_CHANNELS,
+	sdc->pchans = devm_kcalloc(&pdev->dev, sdc->cfg->nr_max_channels,
 				   sizeof(struct sun6i_pchan), GFP_KERNEL);
 	if (!sdc->pchans)
 		return -ENOMEM;
 
-	sdc->vchans = devm_kcalloc(&pdev->dev, NR_MAX_VCHANS,
+	sdc->vchans = devm_kcalloc(&pdev->dev, sdc->cfg->nr_max_vchans,
 				   sizeof(struct sun6i_vchan), GFP_KERNEL);
 	if (!sdc->vchans)
 		return -ENOMEM;
 
 	tasklet_init(&sdc->task, sun6i_dma_tasklet, (unsigned long)sdc);
 
-	for (i = 0; i < NR_MAX_CHANNELS; i++) {
+	for (i = 0; i < sdc->cfg->nr_max_channels; i++) {
 		struct sun6i_pchan *pchan = &sdc->pchans[i];
 
 		pchan->idx = i;
 		pchan->base = sdc->base + 0x100 + i * 0x40;
 	}
 
-	for (i = 0; i < NR_MAX_VCHANS; i++) {
+	for (i = 0; i < sdc->cfg->nr_max_vchans; i++) {
 		struct sun6i_vchan *vchan = &sdc->vchans[i];
 
 		INIT_LIST_HEAD(&vchan->node);
@@ -976,6 +1032,15 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 		goto err_dma_unregister;
 	}
 
+	/*
+	 * sun8i variant requires us to toggle a dma gating register,
+	 * as seen in Allwinner's SDK. This register is not documented
+	 * in the A23 user manual.
+	 */
+	if (of_device_is_compatible(pdev->dev.of_node,
+				    "allwinner,sun8i-a23-dma"))
+		writel(SUN8I_DMA_GATE_ENABLE, sdc->base + SUN8I_DMA_GATE);
+
 	return 0;
 
 err_dma_unregister:
@@ -1007,11 +1072,6 @@ static int sun6i_dma_remove(struct platform_device *pdev)
 
 	return 0;
 }
-
-static struct of_device_id sun6i_dma_match[] = {
-	{ .compatible = "allwinner,sun6i-a31-dma" },
-	{ /* sentinel */ }
-};
 
 static struct platform_driver sun6i_dma_driver = {
 	.probe		= sun6i_dma_probe,
