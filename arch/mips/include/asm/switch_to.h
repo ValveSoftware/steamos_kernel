@@ -75,9 +75,12 @@ do {									\
 #endif
 
 #define __clear_software_ll_bit()					\
-do {									\
-	if (!__builtin_constant_p(cpu_has_llsc) || !cpu_has_llsc)	\
-		ll_bit = 0;						\
+do {	if (cpu_has_rw_llb) {						\
+		write_c0_lladdr(0);					\
+	} else {							\
+		if (!__builtin_constant_p(cpu_has_llsc) || !cpu_has_llsc)\
+			ll_bit = 0;					\
+	}								\
 } while (0)
 
 #define switch_to(prev, next, last)					\
@@ -101,7 +104,6 @@ do {									\
 	if (test_and_clear_tsk_thread_flag(prev, TIF_USEDMSA))		\
 		__fpsave = FP_SAVE_VECTOR;				\
 	(last) = resume(prev, next, task_thread_info(next), __fpsave);	\
-	disable_msa();							\
 } while (0)
 
 #define finish_arch_switch(prev)					\
@@ -119,6 +121,7 @@ do {									\
 	if (cpu_has_userlocal)						\
 		write_c0_userlocal(current_thread_info()->tp_value);	\
 	__restore_watch();						\
+	disable_msa();							\
 } while (0)
 
 #endif /* _ASM_SWITCH_TO_H */

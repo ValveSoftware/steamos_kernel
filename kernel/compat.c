@@ -276,8 +276,7 @@ COMPAT_SYSCALL_DEFINE2(nanosleep, struct compat_timespec __user *, rqtp,
 	 * core implementation decides to return random nonsense.
 	 */
 	if (ret == -ERESTART_RESTARTBLOCK) {
-		struct restart_block *restart
-			= &current_thread_info()->restart_block;
+		struct restart_block *restart = &current->restart_block;
 
 		restart->fn = compat_nanosleep_restart;
 		restart->nanosleep.compat_rmtp = rmtp;
@@ -860,7 +859,7 @@ COMPAT_SYSCALL_DEFINE4(clock_nanosleep, clockid_t, which_clock, int, flags,
 		return -EFAULT;
 
 	if (err == -ERESTART_RESTARTBLOCK) {
-		restart = &current_thread_info()->restart_block;
+		restart = &current->restart_block;
 		restart->fn = compat_clock_nanosleep_restart;
 		restart->nanosleep.compat_rmtp = rmtp;
 	}
@@ -913,7 +912,8 @@ long compat_get_bitmap(unsigned long *mask, const compat_ulong_t __user *umask,
 			 * bitmap. We must however ensure the end of the
 			 * kernel bitmap is zeroed.
 			 */
-			if (nr_compat_longs-- > 0) {
+			if (nr_compat_longs) {
+				nr_compat_longs--;
 				if (__get_user(um, umask))
 					return -EFAULT;
 			} else {
@@ -955,7 +955,8 @@ long compat_put_bitmap(compat_ulong_t __user *umask, unsigned long *mask,
 			 * We dont want to write past the end of the userspace
 			 * bitmap.
 			 */
-			if (nr_compat_longs-- > 0) {
+			if (nr_compat_longs) {
+				nr_compat_longs--;
 				if (__put_user(um, umask))
 					return -EFAULT;
 			}

@@ -59,6 +59,8 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/of_net.h>
+#include <linux/pm_runtime.h>
+
 #include "smsc911x.h"
 
 #define SMSC_CHIPNAME		"smsc911x"
@@ -841,7 +843,7 @@ static int smsc911x_phy_loopbacktest(struct net_device *dev)
 	unsigned long flags;
 
 	/* Initialise tx packet using broadcast destination address */
-	memset(pdata->loopback_tx_pkt, 0xff, ETH_ALEN);
+	eth_broadcast_addr(pdata->loopback_tx_pkt);
 
 	/* Use incrementing source address */
 	for (i = 6; i < 12; i++)
@@ -2338,6 +2340,9 @@ static int smsc911x_drv_remove(struct platform_device *pdev)
 
 	free_netdev(dev);
 
+	pm_runtime_put(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
+
 	return 0;
 }
 
@@ -2413,9 +2418,9 @@ static int smsc911x_drv_probe(struct platform_device *pdev)
 	struct net_device *dev;
 	struct smsc911x_data *pdata;
 	struct smsc911x_platform_config *config = dev_get_platdata(&pdev->dev);
-	struct resource *res, *irq_res;
+	struct resource *res;
 	unsigned int intcfg = 0;
-	int res_size, irq_flags;
+	int res_size, irq, irq_flags;
 	int retval;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
@@ -2429,8 +2434,8 @@ static int smsc911x_drv_probe(struct platform_device *pdev)
 	}
 	res_size = resource_size(res);
 
-	irq_res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
-	if (!irq_res) {
+	irq = platform_get_irq(pdev, 0);
+	if (irq <= 0) {
 		pr_warn("Could not allocate irq resource\n");
 		retval = -ENODEV;
 		goto out_0;
@@ -2450,8 +2455,8 @@ static int smsc911x_drv_probe(struct platform_device *pdev)
 	SET_NETDEV_DEV(dev, &pdev->dev);
 
 	pdata = netdev_priv(dev);
-	dev->irq = irq_res->start;
-	irq_flags = irq_res->flags & IRQF_TRIGGER_MASK;
+	dev->irq = irq;
+	irq_flags = irq_get_trigger_type(irq);
 	pdata->ioaddr = ioremap_nocache(res->start, res_size);
 
 	pdata->dev = dev;
@@ -2490,6 +2495,9 @@ static int smsc911x_drv_probe(struct platform_device *pdev)
 	/* apply the right access if shifting is needed */
 	if (pdata->config.shift)
 		pdata->ops = &shifted_smsc911x_ops;
+
+	pm_runtime_enable(&pdev->dev);
+	pm_runtime_get_sync(&pdev->dev);
 
 	retval = smsc911x_init(dev);
 	if (retval < 0)
@@ -2572,6 +2580,8 @@ out_unregister_netdev_5:
 out_free_irq:
 	free_irq(dev->irq, dev);
 out_disable_resources:
+	pm_runtime_put(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
 	(void)smsc911x_disable_resources(pdev);
 out_enable_resources_fail:
 	smsc911x_free_resources(pdev);
@@ -2649,7 +2659,6 @@ static struct platform_driver smsc911x_driver = {
 	.remove = smsc911x_drv_remove,
 	.driver = {
 		.name	= SMSC_CHIPNAME,
-		.owner	= THIS_MODULE,
 		.pm	= SMSC911X_PM_OPS,
 		.of_match_table = of_match_ptr(smsc911x_dt_ids),
 	},

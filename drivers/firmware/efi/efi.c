@@ -30,6 +30,7 @@ struct efi __read_mostly efi = {
 	.acpi       = EFI_INVALID_TABLE_ADDR,
 	.acpi20     = EFI_INVALID_TABLE_ADDR,
 	.smbios     = EFI_INVALID_TABLE_ADDR,
+	.smbios3    = EFI_INVALID_TABLE_ADDR,
 	.sal_systab = EFI_INVALID_TABLE_ADDR,
 	.boot_info  = EFI_INVALID_TABLE_ADDR,
 	.hcdp       = EFI_INVALID_TABLE_ADDR,
@@ -38,6 +39,7 @@ struct efi __read_mostly efi = {
 	.fw_vendor  = EFI_INVALID_TABLE_ADDR,
 	.runtime    = EFI_INVALID_TABLE_ADDR,
 	.config_table  = EFI_INVALID_TABLE_ADDR,
+	.esrt       = EFI_INVALID_TABLE_ADDR,
 };
 EXPORT_SYMBOL(efi);
 
@@ -63,7 +65,7 @@ static int __init parse_efi_cmdline(char *str)
 }
 early_param("efi", parse_efi_cmdline);
 
-static struct kobject *efi_kobj;
+struct kobject *efi_kobj;
 static struct kobject *efivars_kobj;
 
 /*
@@ -86,6 +88,8 @@ static ssize_t systab_show(struct kobject *kobj,
 		str += sprintf(str, "ACPI=0x%lx\n", efi.acpi);
 	if (efi.smbios != EFI_INVALID_TABLE_ADDR)
 		str += sprintf(str, "SMBIOS=0x%lx\n", efi.smbios);
+	if (efi.smbios3 != EFI_INVALID_TABLE_ADDR)
+		str += sprintf(str, "SMBIOS3=0x%lx\n", efi.smbios3);
 	if (efi.hcdp != EFI_INVALID_TABLE_ADDR)
 		str += sprintf(str, "HCDP=0x%lx\n", efi.hcdp);
 	if (efi.boot_info != EFI_INVALID_TABLE_ADDR)
@@ -112,15 +116,24 @@ EFI_ATTR_SHOW(fw_vendor);
 EFI_ATTR_SHOW(runtime);
 EFI_ATTR_SHOW(config_table);
 
+static ssize_t fw_platform_size_show(struct kobject *kobj,
+				     struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", efi_enabled(EFI_64BIT) ? 64 : 32);
+}
+
 static struct kobj_attribute efi_attr_fw_vendor = __ATTR_RO(fw_vendor);
 static struct kobj_attribute efi_attr_runtime = __ATTR_RO(runtime);
 static struct kobj_attribute efi_attr_config_table = __ATTR_RO(config_table);
+static struct kobj_attribute efi_attr_fw_platform_size =
+	__ATTR_RO(fw_platform_size);
 
 static struct attribute *efi_subsys_attrs[] = {
 	&efi_attr_systab.attr,
 	&efi_attr_fw_vendor.attr,
 	&efi_attr_runtime.attr,
 	&efi_attr_config_table.attr,
+	&efi_attr_fw_platform_size.attr,
 	NULL,
 };
 
@@ -220,6 +233,84 @@ err_put:
 
 subsys_initcall(efisubsys_init);
 
+/*
+ * Find the efi memory descriptor for a given physical address.  Given a
+ * physicall address, determine if it exists within an EFI Memory Map entry,
+ * and if so, populate the supplied memory descriptor with the appropriate
+ * data.
+ */
+int __init efi_mem_desc_lookup(u64 phys_addr, efi_memory_desc_t *out_md)
+{
+	struct efi_memory_map *map = efi.memmap;
+	void *p, *e;
+
+	if (!efi_enabled(EFI_MEMMAP)) {
+		pr_err_once("EFI_MEMMAP is not enabled.\n");
+		return -EINVAL;
+	}
+
+	if (!map) {
+		pr_err_once("efi.memmap is not set.\n");
+		return -EINVAL;
+	}
+	if (!out_md) {
+		pr_err_once("out_md is null.\n");
+		return -EINVAL;
+        }
+	if (WARN_ON_ONCE(!map->phys_map))
+		return -EINVAL;
+	if (WARN_ON_ONCE(map->nr_map == 0) || WARN_ON_ONCE(map->desc_size == 0))
+		return -EINVAL;
+
+	e = map->phys_map + map->nr_map * map->desc_size;
+	for (p = map->phys_map; p < e; p += map->desc_size) {
+		efi_memory_desc_t *md;
+		u64 size;
+		u64 end;
+
+		/*
+		 * If a driver calls this after efi_free_boot_services,
+		 * ->map will be NULL, and the target may also not be mapped.
+		 * So just always get our own virtual map on the CPU.
+		 *
+		 */
+		md = early_memremap((phys_addr_t)p, sizeof (*md));
+		if (!md) {
+			pr_err_once("early_memremap(%p, %zu) failed.\n",
+				    p, sizeof (*md));
+			return -ENOMEM;
+		}
+
+		if (!(md->attribute & EFI_MEMORY_RUNTIME) &&
+		    md->type != EFI_BOOT_SERVICES_DATA &&
+		    md->type != EFI_RUNTIME_SERVICES_DATA) {
+			early_memunmap(md, sizeof (*md));
+			continue;
+		}
+
+		size = md->num_pages << EFI_PAGE_SHIFT;
+		end = md->phys_addr + size;
+		if (phys_addr >= md->phys_addr && phys_addr < end) {
+			memcpy(out_md, md, sizeof(*out_md));
+			early_memunmap(md, sizeof (*md));
+			return 0;
+		}
+
+		early_memunmap(md, sizeof (*md));
+	}
+	pr_err_once("requested map not found.\n");
+	return -ENOENT;
+}
+
+/*
+ * Calculate the highest address of an efi memory descriptor.
+ */
+u64 __init efi_mem_desc_end(efi_memory_desc_t *md)
+{
+	u64 size = md->num_pages << EFI_PAGE_SHIFT;
+	u64 end = md->phys_addr + size;
+	return end;
+}
 
 /*
  * We can't ioremap data in EFI boot services RAM, because we've already mapped
@@ -260,7 +351,9 @@ static __initdata efi_config_table_type_t common_tables[] = {
 	{MPS_TABLE_GUID, "MPS", &efi.mps},
 	{SAL_SYSTEM_TABLE_GUID, "SALsystab", &efi.sal_systab},
 	{SMBIOS_TABLE_GUID, "SMBIOS", &efi.smbios},
+	{SMBIOS3_TABLE_GUID, "SMBIOS 3.0", &efi.smbios3},
 	{UGA_IO_PROTOCOL_GUID, "UGA", &efi.uga},
+	{EFI_SYSTEM_RESOURCE_TABLE_GUID, "ESRT", &efi.esrt},
 	{NULL_GUID, NULL, NULL},
 };
 
@@ -268,15 +361,10 @@ static __init int match_config_table(efi_guid_t *guid,
 				     unsigned long table,
 				     efi_config_table_type_t *table_types)
 {
-	u8 str[EFI_VARIABLE_GUID_LEN + 1];
 	int i;
 
 	if (table_types) {
-		efi_guid_unparse(guid, str);
-
 		for (i = 0; efi_guidcmp(table_types[i].guid, NULL_GUID); i++) {
-			efi_guid_unparse(&table_types[i].guid, str);
-
 			if (!efi_guidcmp(*guid, table_types[i].guid)) {
 				*(table_types[i].ptr) = table;
 				pr_cont(" %s=0x%lx ",
@@ -289,10 +377,49 @@ static __init int match_config_table(efi_guid_t *guid,
 	return 0;
 }
 
+int __init efi_config_parse_tables(void *config_tables, int count, int sz,
+				   efi_config_table_type_t *arch_tables)
+{
+	void *tablep;
+	int i;
+
+	tablep = config_tables;
+	pr_info("");
+	for (i = 0; i < count; i++) {
+		efi_guid_t guid;
+		unsigned long table;
+
+		if (efi_enabled(EFI_64BIT)) {
+			u64 table64;
+			guid = ((efi_config_table_64_t *)tablep)->guid;
+			table64 = ((efi_config_table_64_t *)tablep)->table;
+			table = table64;
+#ifndef CONFIG_64BIT
+			if (table64 >> 32) {
+				pr_cont("\n");
+				pr_err("Table located above 4GB, disabling EFI.\n");
+				return -EINVAL;
+			}
+#endif
+		} else {
+			guid = ((efi_config_table_32_t *)tablep)->guid;
+			table = ((efi_config_table_32_t *)tablep)->table;
+		}
+
+		if (!match_config_table(&guid, table, common_tables))
+			match_config_table(&guid, table, arch_tables);
+
+		tablep += sz;
+	}
+	pr_cont("\n");
+	set_bit(EFI_CONFIG_TABLES, &efi.flags);
+	return 0;
+}
+
 int __init efi_config_init(efi_config_table_type_t *arch_tables)
 {
-	void *config_tables, *tablep;
-	int i, sz;
+	void *config_tables;
+	int sz, ret;
 
 	if (efi_enabled(EFI_64BIT))
 		sz = sizeof(efi_config_table_64_t);
@@ -309,42 +436,11 @@ int __init efi_config_init(efi_config_table_type_t *arch_tables)
 		return -ENOMEM;
 	}
 
-	tablep = config_tables;
-	pr_info("");
-	for (i = 0; i < efi.systab->nr_tables; i++) {
-		efi_guid_t guid;
-		unsigned long table;
+	ret = efi_config_parse_tables(config_tables, efi.systab->nr_tables, sz,
+				      arch_tables);
 
-		if (efi_enabled(EFI_64BIT)) {
-			u64 table64;
-			guid = ((efi_config_table_64_t *)tablep)->guid;
-			table64 = ((efi_config_table_64_t *)tablep)->table;
-			table = table64;
-#ifndef CONFIG_64BIT
-			if (table64 >> 32) {
-				pr_cont("\n");
-				pr_err("Table located above 4GB, disabling EFI.\n");
-				early_memunmap(config_tables,
-					       efi.systab->nr_tables * sz);
-				return -EINVAL;
-			}
-#endif
-		} else {
-			guid = ((efi_config_table_32_t *)tablep)->guid;
-			table = ((efi_config_table_32_t *)tablep)->table;
-		}
-
-		if (!match_config_table(&guid, table, common_tables))
-			match_config_table(&guid, table, arch_tables);
-
-		tablep += sz;
-	}
-	pr_cont("\n");
 	early_memunmap(config_tables, efi.systab->nr_tables * sz);
-
-	set_bit(EFI_CONFIG_TABLES, &efi.flags);
-
-	return 0;
+	return ret;
 }
 
 #ifdef CONFIG_EFI_VARS_MODULE
@@ -399,8 +495,7 @@ static int __init fdt_find_uefi_params(unsigned long node, const char *uname,
 	u64 val;
 	int i, len;
 
-	if (depth != 1 ||
-	    (strcmp(uname, "chosen") != 0 && strcmp(uname, "chosen@0") != 0))
+	if (depth != 1 || strcmp(uname, "chosen") != 0)
 		return 0;
 
 	for (i = 0; i < ARRAY_SIZE(dt_params); i++) {

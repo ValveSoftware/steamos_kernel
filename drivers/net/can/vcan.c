@@ -50,9 +50,6 @@
 #include <linux/slab.h>
 #include <net/rtnetlink.h>
 
-static __initconst const char banner[] =
-	KERN_INFO "vcan: Virtual CAN interface driver\n";
-
 MODULE_DESCRIPTION("virtual CAN interface");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Urs Thuermann <urs.thuermann@volkswagen.de>");
@@ -80,6 +77,9 @@ static void vcan_rx(struct sk_buff *skb, struct net_device *dev)
 	skb->pkt_type  = PACKET_BROADCAST;
 	skb->dev       = dev;
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
+
+	if (!(skb->tstamp.tv64))
+		__net_timestamp(skb);
 
 	netif_rx_ni(skb);
 }
@@ -173,7 +173,7 @@ static struct rtnl_link_ops vcan_link_ops __read_mostly = {
 
 static __init int vcan_init_module(void)
 {
-	printk(banner);
+	pr_info("vcan: Virtual CAN interface driver\n");
 
 	if (echo)
 		printk(KERN_INFO "vcan: enabled echo on driver level.\n");

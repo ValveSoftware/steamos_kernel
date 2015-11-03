@@ -91,6 +91,11 @@ static const char version[] =
 
 #include "smc91x.h"
 
+#if defined(CONFIG_ASSABET_NEPONSET)
+#include <mach/assabet.h>
+#include <mach/neponset.h>
+#endif
+
 #ifndef SMC_NOWAIT
 # define SMC_NOWAIT		0
 #endif
@@ -2199,27 +2204,17 @@ static int try_toggle_control_gpio(struct device *dev,
 				   int value, unsigned int nsdelay)
 {
 	struct gpio_desc *gpio = *desc;
-	int res;
+	enum gpiod_flags flags = value ? GPIOD_OUT_LOW : GPIOD_OUT_HIGH;
 
-	gpio = devm_gpiod_get_index(dev, name, index);
-	if (IS_ERR(gpio)) {
-		if (PTR_ERR(gpio) == -ENOENT) {
-			*desc = NULL;
-			return 0;
-		}
-
+	gpio = devm_gpiod_get_index_optional(dev, name, index, flags);
+	if (IS_ERR(gpio))
 		return PTR_ERR(gpio);
+
+	if (gpio) {
+		if (nsdelay)
+			usleep_range(nsdelay, 2 * nsdelay);
+		gpiod_set_value_cansleep(gpio, value);
 	}
-	res = gpiod_direction_output(gpio, !value);
-	if (res) {
-		dev_err(dev, "unable to toggle gpio %s: %i\n", name, res);
-		devm_gpiod_put(dev, gpio);
-		gpio = NULL;
-		return res;
-	}
-	if (nsdelay)
-		usleep_range(nsdelay, 2 * nsdelay);
-	gpiod_set_value_cansleep(gpio, value);
 	*desc = gpio;
 
 	return 0;
@@ -2355,8 +2350,9 @@ static int smc_drv_probe(struct platform_device *pdev)
 	ret = smc_request_attrib(pdev, ndev);
 	if (ret)
 		goto out_release_io;
-#if defined(CONFIG_SA1100_ASSABET)
-	neponset_ncr_set(NCR_ENET_OSC_EN);
+#if defined(CONFIG_ASSABET_NEPONSET)
+	if (machine_is_assabet() && machine_has_neponset())
+		neponset_ncr_set(NCR_ENET_OSC_EN);
 #endif
 	platform_set_drvdata(pdev, ndev);
 	ret = smc_enable_device(pdev);
@@ -2472,7 +2468,6 @@ static struct platform_driver smc_driver = {
 	.remove		= smc_drv_remove,
 	.driver		= {
 		.name	= CARDNAME,
-		.owner	= THIS_MODULE,
 		.pm	= &smc_drv_pm_ops,
 		.of_match_table = of_match_ptr(smc91x_match),
 	},
