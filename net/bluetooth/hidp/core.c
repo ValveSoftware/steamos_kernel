@@ -378,9 +378,16 @@ static int hidp_output_report(struct hid_device *hid, __u8 *data, size_t count)
 {
 	struct hidp_session *session = hid->driver_data;
 
-	return hidp_send_intr_message(session,
-				      HIDP_TRANS_DATA | HIDP_DATA_RTYPE_OUPUT,
-				      data, count);
+	/* The Sixaxis and Dualshock 4 wants report sent via the ctrl channel */
+	if(hid->vendor == 0x54c && (hid->product == 0x5c4 || hid->product == 0x268)) {
+		return hidp_send_ctrl_message(session,
+					      HIDP_TRANS_SET_REPORT | HIDP_DATA_RTYPE_OUPUT,
+					      data, count);
+	} else {
+		return hidp_send_intr_message(session,
+					      HIDP_TRANS_DATA | HIDP_DATA_RTYPE_OUPUT,
+					      data, count);
+	}
 }
 
 static int hidp_raw_request(struct hid_device *hid, unsigned char reportnum,
