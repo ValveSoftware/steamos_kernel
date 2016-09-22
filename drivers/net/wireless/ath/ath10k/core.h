@@ -445,10 +445,10 @@ enum ath10k_fw_features {
 	 * to distinguish whether WoWLAN is really supported or not.
 	 */
  	ATH10K_FW_FEATURE_WOWLAN_SUPPORT = 6,
- 
+
 	/* Don't trust error code from otp.bin */
 	ATH10K_FW_FEATURE_IGNORE_OTP_RESULT,
-	
+
 	/* keep last */
 	ATH10K_FW_FEATURE_COUNT,
 };
