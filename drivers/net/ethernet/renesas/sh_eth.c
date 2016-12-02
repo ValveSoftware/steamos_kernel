@@ -1148,8 +1148,8 @@ static void sh_eth_ring_format(struct net_device *ndev)
 
 		/* RX descriptor */
 		rxdesc = &mdp->rx_ring[i];
-		/* The size of the buffer is a multiple of 16 bytes. */
-		rxdesc->buffer_length = ALIGN(mdp->rx_buf_sz, 16);
+		/* The size of the buffer is a multiple of 32 bytes. */
+		rxdesc->buffer_length = ALIGN(mdp->rx_buf_sz, 32);
 		dma_addr = dma_map_single(&ndev->dev, skb->data,
 					  rxdesc->buffer_length,
 					  DMA_FROM_DEVICE);
@@ -1173,7 +1173,8 @@ static void sh_eth_ring_format(struct net_device *ndev)
 	mdp->dirty_rx = (u32) (i - mdp->num_rx_ring);
 
 	/* Mark the last entry as wrapping the ring. */
-	rxdesc->status |= cpu_to_edmac(mdp, RD_RDEL);
+	if (rxdesc)
+		rxdesc->status |= cpu_to_edmac(mdp, RD_RDEL);
 
 	memset(mdp->tx_ring, 0, tx_ringsize);
 
@@ -1481,6 +1482,7 @@ static int sh_eth_rx(struct net_device *ndev, u32 intr_status, int *quota)
 		if (mdp->cd->shift_rd0)
 			desc_status >>= 16;
 
+		skb = mdp->rx_skbuff[entry];
 		if (desc_status & (RD_RFS1 | RD_RFS2 | RD_RFS3 | RD_RFS4 |
 				   RD_RFS5 | RD_RFS6 | RD_RFS10)) {
 			ndev->stats.rx_errors++;
@@ -1496,17 +1498,16 @@ static int sh_eth_rx(struct net_device *ndev, u32 intr_status, int *quota)
 				ndev->stats.rx_missed_errors++;
 			if (desc_status & RD_RFS10)
 				ndev->stats.rx_over_errors++;
-		} else {
+		} else	if (skb) {
 			if (!mdp->cd->hw_swap)
 				sh_eth_soft_swap(
 					phys_to_virt(ALIGN(rxdesc->addr, 4)),
 					pkt_len + 2);
-			skb = mdp->rx_skbuff[entry];
 			mdp->rx_skbuff[entry] = NULL;
 			if (mdp->cd->rpadir)
 				skb_reserve(skb, NET_IP_ALIGN);
 			dma_unmap_single(&ndev->dev, rxdesc->addr,
-					 ALIGN(mdp->rx_buf_sz, 16),
+					 ALIGN(mdp->rx_buf_sz, 32),
 					 DMA_FROM_DEVICE);
 			skb_put(skb, pkt_len);
 			skb->protocol = eth_type_trans(skb, ndev);
@@ -1524,8 +1525,8 @@ static int sh_eth_rx(struct net_device *ndev, u32 intr_status, int *quota)
 	for (; mdp->cur_rx - mdp->dirty_rx > 0; mdp->dirty_rx++) {
 		entry = mdp->dirty_rx % mdp->num_rx_ring;
 		rxdesc = &mdp->rx_ring[entry];
-		/* The size of the buffer is 16 byte boundary. */
-		rxdesc->buffer_length = ALIGN(mdp->rx_buf_sz, 16);
+		/* The size of the buffer is 32 byte boundary. */
+		rxdesc->buffer_length = ALIGN(mdp->rx_buf_sz, 32);
 
 		if (mdp->rx_skbuff[entry] == NULL) {
 			skb = netdev_alloc_skb(ndev, skbuff_size);

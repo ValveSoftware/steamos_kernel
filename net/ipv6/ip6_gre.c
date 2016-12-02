@@ -783,6 +783,8 @@ static inline int ip6gre_xmit_ipv4(struct sk_buff *skb, struct net_device *dev)
 	__u32 mtu;
 	int err;
 
+	memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
+
 	if (!(t->parms.flags & IP6_TNL_F_IGN_ENCAP_LIMIT))
 		encap_limit = t->parms.encap_limit;
 
@@ -1553,13 +1555,11 @@ static int ip6gre_changelink(struct net_device *dev, struct nlattr *tb[],
 			return -EEXIST;
 	} else {
 		t = nt;
-
-		ip6gre_tunnel_unlink(ign, t);
-		ip6gre_tnl_change(t, &p, !tb[IFLA_MTU]);
-		ip6gre_tunnel_link(ign, t);
-		netdev_state_change(dev);
 	}
 
+	ip6gre_tunnel_unlink(ign, t);
+	ip6gre_tnl_change(t, &p, !tb[IFLA_MTU]);
+	ip6gre_tunnel_link(ign, t);
 	return 0;
 }
 

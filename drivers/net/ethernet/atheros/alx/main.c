@@ -1538,6 +1538,7 @@ static const struct pci_device_id alx_pci_tbl[] = {
 	  .driver_data = ALX_DEV_QUIRK_MSI_INTX_DISABLE_BUG },
 	{ PCI_VDEVICE(ATTANSIC, ALX_DEV_ID_AR8171) },
 	{ PCI_VDEVICE(ATTANSIC, ALX_DEV_ID_E2400) },
+	{ PCI_VDEVICE(ATTANSIC, ALX_DEV_ID_E2500) },
 	{ PCI_VDEVICE(ATTANSIC, ALX_DEV_ID_AR8172) },
 	{}
 };

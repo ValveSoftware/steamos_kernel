@@ -176,6 +176,7 @@
 #define AT_XDMAC_MAX_CHAN	0x20
 #define AT_XDMAC_MAX_CSIZE	16	/* 16 data */
 #define AT_XDMAC_MAX_DWIDTH	8	/* 64 bits */
+#define AT_XDMAC_RESIDUE_MAX_RETRIES	5
 
 #define AT_XDMAC_DMA_BUSWIDTHS\
 	(BIT(DMA_SLAVE_BUSWIDTH_UNDEFINED) |\
@@ -237,7 +238,7 @@ struct at_xdmac_lld {
 	u32		mbr_cfg;	/* Configuration Register */
 };
 
-
+/* 64-bit alignment needed to update CNDA and CUBC registers in an atomic way. */
 struct at_xdmac_desc {
 	struct at_xdmac_lld		lld;
 	enum dma_transfer_direction	direction;
@@ -248,7 +249,7 @@ struct at_xdmac_desc {
 	unsigned int			xfer_size;
 	struct list_head		descs_list;
 	struct list_head		xfer_node;
-};
+} __aligned(sizeof(u64));
 
 static inline void __iomem *at_xdmac_chan_reg_base(struct at_xdmac *atxdmac, unsigned int chan_nb)
 {
@@ -925,10 +926,11 @@ at_xdmac_tx_status(struct dma_chan *chan, dma_cookie_t cookie,
 	struct at_xdmac_desc	*desc, *_desc;
 	struct list_head	*descs_list;
 	enum dma_status		ret;
-	int			residue;
-	u32			cur_nda, mask, value;
+	int			residue, retry;
+	u32			cur_nda, check_nda, cur_ubc, mask, value;
 	u8			dwidth = 0;
 	unsigned long		flags;
+	bool			initd;
 
 	ret = dma_cookie_status(chan, cookie, txstate);
 	if (ret == DMA_COMPLETE)
@@ -953,7 +955,16 @@ at_xdmac_tx_status(struct dma_chan *chan, dma_cookie_t cookie,
 	residue = desc->xfer_size;
 	/*
 	 * Flush FIFO: only relevant when the transfer is source peripheral
-	 * synchronized.
+	 * synchronized. Flush is needed before reading CUBC because data in
+	 * the FIFO are not reported by CUBC. Reporting a residue of the
+	 * transfer length while we have data in FIFO can cause issue.
+	 * Usecase: atmel USART has a timeout which means I have received
+	 * characters but there is no more character received for a while. On
+	 * timeout, it requests the residue. If the data are in the DMA FIFO,
+	 * we will return a residue of the transfer length. It means no data
+	 * received. If an application is waiting for these data, it will hang
+	 * since we won't have another USART timeout without receiving new
+	 * data.
 	 */
 	mask = AT_XDMAC_CC_TYPE | AT_XDMAC_CC_DSYNC;
 	value = AT_XDMAC_CC_TYPE_PER_TRAN | AT_XDMAC_CC_DSYNC_PER2MEM;
@@ -963,7 +974,64 @@ at_xdmac_tx_status(struct dma_chan *chan, dma_cookie_t cookie,
 			cpu_relax();
 	}
 
-	cur_nda = at_xdmac_chan_read(atchan, AT_XDMAC_CNDA) & 0xfffffffc;
+	/*
+	 * The easiest way to compute the residue should be to pause the DMA
+	 * but doing this can lead to miss some data as some devices don't
+	 * have FIFO.
+	 * We need to read several registers because:
+	 * - DMA is running therefore a descriptor change is possible while
+	 * reading these registers
+	 * - When the block transfer is done, the value of the CUBC register
+	 * is set to its initial value until the fetch of the next descriptor.
+	 * This value will corrupt the residue calculation so we have to skip
+	 * it.
+	 *
+	 * INITD --------                    ------------
+	 *              |____________________|
+	 *       _______________________  _______________
+	 * NDA       @desc2             \/   @desc3
+	 *       _______________________/\_______________
+	 *       __________  ___________  _______________
+	 * CUBC       0    \/ MAX desc1 \/  MAX desc2
+	 *       __________/\___________/\_______________
+	 *
+	 * Since descriptors are aligned on 64 bits, we can assume that
+	 * the update of NDA and CUBC is atomic.
+	 * Memory barriers are used to ensure the read order of the registers.
+	 * A max number of retries is set because unlikely it could never ends.
+	 */
+	for (retry = 0; retry < AT_XDMAC_RESIDUE_MAX_RETRIES; retry++) {
+		check_nda = at_xdmac_chan_read(atchan, AT_XDMAC_CNDA) & 0xfffffffc;
+		rmb();
+		initd = !!(at_xdmac_chan_read(atchan, AT_XDMAC_CC) & AT_XDMAC_CC_INITD);
+		rmb();
+		cur_ubc = at_xdmac_chan_read(atchan, AT_XDMAC_CUBC);
+		rmb();
+		cur_nda = at_xdmac_chan_read(atchan, AT_XDMAC_CNDA) & 0xfffffffc;
+		rmb();
+
+		if ((check_nda == cur_nda) && initd)
+			break;
+	}
+
+	if (unlikely(retry >= AT_XDMAC_RESIDUE_MAX_RETRIES)) {
+		ret = DMA_ERROR;
+		goto spin_unlock;
+	}
+
+	/*
+	 * Flush FIFO: only relevant when the transfer is source peripheral
+	 * synchronized. Another flush is needed here because CUBC is updated
+	 * when the controller sends the data write command. It can lead to
+	 * report data that are not written in the memory or the device. The
+	 * FIFO flush ensures that data are really written.
+	 */
+	if ((desc->lld.mbr_cfg & mask) == value) {
+		at_xdmac_write(atxdmac, AT_XDMAC_GSWF, atchan->mask);
+		while (!(at_xdmac_chan_read(atchan, AT_XDMAC_CIS) & AT_XDMAC_CIS_FIS))
+			cpu_relax();
+	}
+
 	/*
 	 * Remove size of all microblocks already transferred and the current
 	 * one. Then add the remaining size to transfer of the current
@@ -976,7 +1044,7 @@ at_xdmac_tx_status(struct dma_chan *chan, dma_cookie_t cookie,
 		if ((desc->lld.mbr_nda & 0xfffffffc) == cur_nda)
 			break;
 	}
-	residue += at_xdmac_chan_read(atchan, AT_XDMAC_CUBC) << dwidth;
+	residue += cur_ubc << dwidth;
 
 	dma_set_residue(txstate, residue);
 
@@ -1230,6 +1298,7 @@ static int at_xdmac_device_terminate_all(struct dma_chan *chan)
 	list_for_each_entry_safe(desc, _desc, &atchan->xfers_list, xfer_node)
 		at_xdmac_remove_xfer(atchan, desc);
 
+	clear_bit(AT_XDMAC_CHAN_IS_PAUSED, &atchan->status);
 	clear_bit(AT_XDMAC_CHAN_IS_CYCLIC, &atchan->status);
 	spin_unlock_irqrestore(&atchan->lock, flags);
 
@@ -1362,6 +1431,8 @@ static int atmel_xdmac_resume(struct device *dev)
 		atchan = to_at_xdmac_chan(chan);
 		at_xdmac_chan_write(atchan, AT_XDMAC_CC, atchan->save_cc);
 		if (at_xdmac_chan_is_cyclic(atchan)) {
+			if (at_xdmac_chan_is_paused(atchan))
+				at_xdmac_device_resume(chan);
 			at_xdmac_chan_write(atchan, AT_XDMAC_CNDA, atchan->save_cnda);
 			at_xdmac_chan_write(atchan, AT_XDMAC_CNDC, atchan->save_cndc);
 			at_xdmac_chan_write(atchan, AT_XDMAC_CIE, atchan->save_cim);

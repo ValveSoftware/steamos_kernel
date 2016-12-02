@@ -276,8 +276,12 @@ static struct dentry *start_creating(const char *name, struct dentry *parent)
 		dput(dentry);
 		dentry = ERR_PTR(-EEXIST);
 	}
-	if (IS_ERR(dentry))
+
+	if (IS_ERR(dentry)) {
 		mutex_unlock(&d_inode(parent)->i_mutex);
+		simple_release_fs(&debugfs_mount, &debugfs_mount_count);
+	}
+
 	return dentry;
 }
 
@@ -458,7 +462,7 @@ struct dentry *debugfs_create_automount(const char *name,
 	if (unlikely(!inode))
 		return failed_creating(dentry);
 
-	inode->i_mode = S_IFDIR | S_IRWXU | S_IRUGO | S_IXUGO;
+	make_empty_dir_inode(inode);
 	inode->i_flags |= S_AUTOMOUNT;
 	inode->i_private = data;
 	dentry->d_fsdata = (void *)f;

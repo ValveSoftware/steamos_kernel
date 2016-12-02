@@ -40,6 +40,7 @@
 #define ALX_DEV_ID_AR8162				0x1090
 #define ALX_DEV_ID_AR8171				0x10A1
 #define ALX_DEV_ID_E2400				0xe0A1
+#define ALX_DEV_ID_E2500				0xe0B1
 #define ALX_DEV_ID_AR8172				0x10A0
 
 /* rev definition,

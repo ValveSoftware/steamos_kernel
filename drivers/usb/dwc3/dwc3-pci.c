@@ -24,12 +24,17 @@
 
 #include "platform_data.h"
 
-#define PCI_DEVICE_ID_SYNOPSYS_HAPSUSB3	0xabcd
-#define PCI_DEVICE_ID_INTEL_BYT		0x0f37
-#define PCI_DEVICE_ID_INTEL_MRFLD	0x119e
-#define PCI_DEVICE_ID_INTEL_BSW		0x22B7
-#define PCI_DEVICE_ID_INTEL_SPTLP	0x9d30
-#define PCI_DEVICE_ID_INTEL_SPTH	0xa130
+#define PCI_DEVICE_ID_SYNOPSYS_HAPSUSB3		0xabcd
+#define PCI_DEVICE_ID_SYNOPSYS_HAPSUSB3_AXI	0xabce
+#define PCI_DEVICE_ID_SYNOPSYS_HAPSUSB31	0xabcf
+#define PCI_DEVICE_ID_INTEL_BYT			0x0f37
+#define PCI_DEVICE_ID_INTEL_MRFLD		0x119e
+#define PCI_DEVICE_ID_INTEL_BSW			0x22b7
+#define PCI_DEVICE_ID_INTEL_SPTLP		0x9d30
+#define PCI_DEVICE_ID_INTEL_SPTH		0xa130
+#define PCI_DEVICE_ID_INTEL_BXT			0x0aaa
+#define PCI_DEVICE_ID_INTEL_APL			0x5aaa
+#define PCI_DEVICE_ID_INTEL_KBP			0xa2b0
 
 static int dwc3_pci_quirks(struct pci_dev *pdev)
 {
@@ -60,6 +65,21 @@ static int dwc3_pci_quirks(struct pci_dev *pdev)
 		pdata.disable_scramble_quirk = true;
 		pdata.dis_u3_susphy_quirk = true;
 		pdata.dis_u2_susphy_quirk = true;
+
+		return platform_device_add_data(pci_get_drvdata(pdev), &pdata,
+						sizeof(pdata));
+	}
+
+	if (pdev->vendor == PCI_VENDOR_ID_SYNOPSYS &&
+	    (pdev->device == PCI_DEVICE_ID_SYNOPSYS_HAPSUSB3 ||
+	     pdev->device == PCI_DEVICE_ID_SYNOPSYS_HAPSUSB3_AXI ||
+	     pdev->device == PCI_DEVICE_ID_SYNOPSYS_HAPSUSB31)) {
+
+		struct dwc3_platform_data pdata;
+
+		memset(&pdata, 0, sizeof(pdata));
+		pdata.usb3_lpm_capable = true;
+		pdata.has_lpm_erratum = true;
 
 		return platform_device_add_data(pci_get_drvdata(pdev), &pdata,
 						sizeof(pdata));
@@ -136,11 +156,22 @@ static const struct pci_device_id dwc3_pci_id_table[] = {
 		PCI_DEVICE(PCI_VENDOR_ID_SYNOPSYS,
 				PCI_DEVICE_ID_SYNOPSYS_HAPSUSB3),
 	},
+	{
+		PCI_DEVICE(PCI_VENDOR_ID_SYNOPSYS,
+				PCI_DEVICE_ID_SYNOPSYS_HAPSUSB3_AXI),
+	},
+	{
+		PCI_DEVICE(PCI_VENDOR_ID_SYNOPSYS,
+				PCI_DEVICE_ID_SYNOPSYS_HAPSUSB31),
+	},
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_BSW), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_BYT), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_MRFLD), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_SPTLP), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_SPTH), },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_BXT), },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_APL), },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_KBP), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_NL_USB), },
 	{  }	/* Terminating Entry */
 };

@@ -289,6 +289,14 @@ static int xhci_abort_cmd_ring(struct xhci_hcd *xhci)
 
 	temp_64 = xhci_read_64(xhci, &xhci->op_regs->cmd_ring);
 	xhci->cmd_ring_state = CMD_RING_STATE_ABORTED;
+
+	/*
+	 * Writing the CMD_RING_ABORT bit should cause a cmd completion event,
+	 * however on some host hw the CMD_RING_RUNNING bit is correctly cleared
+	 * but the completion event in never sent. Use the cmd timeout timer to
+	 * handle those cases. Use twice the time to cover the bit polling retry
+	 */
+	mod_timer(&xhci->cmd_timer, jiffies + (2 * XHCI_CMD_DEFAULT_TIMEOUT));
 	xhci_write_64(xhci, temp_64 | CMD_RING_ABORT,
 			&xhci->op_regs->cmd_ring);
 
@@ -313,6 +321,7 @@ static int xhci_abort_cmd_ring(struct xhci_hcd *xhci)
 
 		xhci_err(xhci, "Stopped the command ring failed, "
 				"maybe the host is dead\n");
+		del_timer(&xhci->cmd_timer);
 		xhci->xhc_state |= XHCI_STATE_DYING;
 		xhci_quiesce(xhci);
 		xhci_halt(xhci);
@@ -837,6 +846,10 @@ void xhci_stop_endpoint_command_watchdog(unsigned long arg)
 	spin_lock_irqsave(&xhci->lock, flags);
 
 	ep->stop_cmds_pending--;
+	if (xhci->xhc_state & XHCI_STATE_REMOVING) {
+		spin_unlock_irqrestore(&xhci->lock, flags);
+		return;
+	}
 	if (xhci->xhc_state & XHCI_STATE_DYING) {
 		xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
 				"Stop EP timer ran, but another timer marked "
@@ -890,7 +903,7 @@ void xhci_stop_endpoint_command_watchdog(unsigned long arg)
 	spin_unlock_irqrestore(&xhci->lock, flags);
 	xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
 			"Calling usb_hc_died()");
-	usb_hc_died(xhci_to_hcd(xhci)->primary_hcd);
+	usb_hc_died(xhci_to_hcd(xhci));
 	xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
 			"xHCI host controller is dead.");
 }
@@ -1252,22 +1265,21 @@ void xhci_handle_command_timeout(unsigned long data)
 	int ret;
 	unsigned long flags;
 	u64 hw_ring_state;
-	struct xhci_command *cur_cmd = NULL;
+	bool second_timeout = false;
 	xhci = (struct xhci_hcd *) data;
 
 	/* mark this command to be cancelled */
 	spin_lock_irqsave(&xhci->lock, flags);
 	if (xhci->current_cmd) {
-		cur_cmd = xhci->current_cmd;
-		cur_cmd->status = COMP_CMD_ABORT;
+		if (xhci->current_cmd->status == COMP_CMD_ABORT)
+			second_timeout = true;
+		xhci->current_cmd->status = COMP_CMD_ABORT;
 	}
-
 
 	/* Make sure command ring is running before aborting it */
 	hw_ring_state = xhci_read_64(xhci, &xhci->op_regs->cmd_ring);
 	if ((xhci->cmd_ring_state & CMD_RING_STATE_RUNNING) &&
 	    (hw_ring_state & CMD_RING_RUNNING))  {
-
 		spin_unlock_irqrestore(&xhci->lock, flags);
 		xhci_dbg(xhci, "Command timeout\n");
 		ret = xhci_abort_cmd_ring(xhci);
@@ -1279,6 +1291,15 @@ void xhci_handle_command_timeout(unsigned long data)
 		}
 		return;
 	}
+
+	/* command ring failed to restart, or host removed. Bail out */
+	if (second_timeout || xhci->xhc_state & XHCI_STATE_REMOVING) {
+		spin_unlock_irqrestore(&xhci->lock, flags);
+		xhci_dbg(xhci, "command timed out twice, ring start fail?\n");
+		xhci_cleanup_command_queue(xhci);
+		return;
+	}
+
 	/* command timeout on stopped ring, ring can't be aborted */
 	xhci_dbg(xhci, "Command timeout on stopped ring\n");
 	xhci_handle_stopped_cmd_ring(xhci, xhci->current_cmd);
@@ -1314,12 +1335,6 @@ static void handle_cmd_completion(struct xhci_hcd *xhci,
 
 	cmd = list_entry(xhci->cmd_list.next, struct xhci_command, cmd_list);
 
-	if (cmd->command_trb != xhci->cmd_ring->dequeue) {
-		xhci_err(xhci,
-			 "Command completion event does not match command\n");
-		return;
-	}
-
 	del_timer(&xhci->cmd_timer);
 
 	trace_xhci_cmd_completion(cmd_trb, (struct xhci_generic_trb *) event);
@@ -1331,6 +1346,13 @@ static void handle_cmd_completion(struct xhci_hcd *xhci,
 		xhci_handle_stopped_cmd_ring(xhci, cmd);
 		return;
 	}
+
+	if (cmd->command_trb != xhci->cmd_ring->dequeue) {
+		xhci_err(xhci,
+			 "Command completion event does not match command\n");
+		return;
+	}
+
 	/*
 	 * Host aborted the command ring, check if the current command was
 	 * supposed to be aborted, otherwise continue normally.
@@ -1583,7 +1605,8 @@ static void handle_port_status(struct xhci_hcd *xhci,
 			 */
 			bogus_port_status = true;
 			goto cleanup;
-		} else {
+		} else if (!test_bit(faked_port_index,
+				     &bus_state->resuming_ports)) {
 			xhci_dbg(xhci, "resume HS port %d\n", port_id);
 			bus_state->resume_done[faked_port_index] = jiffies +
 				msecs_to_jiffies(USB_RESUME_TIMEOUT);
@@ -3001,21 +3024,6 @@ int xhci_queue_intr_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 }
 
 /*
- * The TD size is the number of bytes remaining in the TD (including this TRB),
- * right shifted by 10.
- * It must fit in bits 21:17, so it can't be bigger than 31.
- */
-static u32 xhci_td_remainder(unsigned int remainder)
-{
-	u32 max = (1 << (21 - 17 + 1)) - 1;
-
-	if ((remainder >> 10) >= max)
-		return max << 17;
-	else
-		return (remainder >> 10) << 17;
-}
-
-/*
  * For xHCI 1.0 host controllers, TD size is the number of max packet sized
  * packets remaining in the TD (*not* including this TRB).
  *
@@ -3027,29 +3035,35 @@ static u32 xhci_td_remainder(unsigned int remainder)
  *
  * TD size = total_packet_count - packets_transferred
  *
- * It must fit in bits 21:17, so it can't be bigger than 31.
+ * For xHCI 0.96 and older, TD size field should be the remaining bytes
+ * including this TRB, right shifted by 10
+ *
+ * For all hosts it must fit in bits 21:17, so it can't be bigger than 31.
+ * This is taken care of in the TRB_TD_SIZE() macro
+ *
  * The last TRB in a TD must have the TD size set to zero.
  */
-static u32 xhci_v1_0_td_remainder(int running_total, int trb_buff_len,
-		unsigned int total_packet_count, struct urb *urb,
-		unsigned int num_trbs_left)
+static u32 xhci_td_remainder(struct xhci_hcd *xhci, int transferred,
+			      int trb_buff_len, unsigned int td_total_len,
+			      struct urb *urb, unsigned int num_trbs_left)
 {
-	int packets_transferred;
+	u32 maxp, total_packet_count;
+
+	if (xhci->hci_version < 0x100)
+		return ((td_total_len - transferred) >> 10);
+
+	maxp = GET_MAX_PACKET(usb_endpoint_maxp(&urb->ep->desc));
+	total_packet_count = DIV_ROUND_UP(td_total_len, maxp);
 
 	/* One TRB with a zero-length data packet. */
-	if (num_trbs_left == 0 || (running_total == 0 && trb_buff_len == 0))
+	if (num_trbs_left == 0 || (transferred == 0 && trb_buff_len == 0) ||
+	    trb_buff_len == td_total_len)
 		return 0;
 
-	/* All the TRB queueing functions don't count the current TRB in
-	 * running_total.
-	 */
-	packets_transferred = (running_total + trb_buff_len) /
-		GET_MAX_PACKET(usb_endpoint_maxp(&urb->ep->desc));
-
-	if ((total_packet_count - packets_transferred) > 31)
-		return 31 << 17;
-	return (total_packet_count - packets_transferred) << 17;
+	/* Queueing functions don't count the current TRB into transferred */
+	return (total_packet_count - ((transferred + trb_buff_len) / maxp));
 }
+
 
 static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		struct urb *urb, int slot_id, unsigned int ep_index)
@@ -3172,17 +3186,12 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		}
 
 		/* Set the TRB length, TD size, and interrupter fields. */
-		if (xhci->hci_version < 0x100) {
-			remainder = xhci_td_remainder(
-					urb->transfer_buffer_length -
-					running_total);
-		} else {
-			remainder = xhci_v1_0_td_remainder(running_total,
-					trb_buff_len, total_packet_count, urb,
-					num_trbs - 1);
-		}
+		remainder = xhci_td_remainder(xhci, running_total, trb_buff_len,
+					   urb->transfer_buffer_length,
+					   urb, num_trbs - 1);
+
 		length_field = TRB_LEN(trb_buff_len) |
-			remainder |
+			TRB_TD_SIZE(remainder) |
 			TRB_INTR_TARGET(0);
 
 		if (num_trbs > 1)
@@ -3345,17 +3354,12 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 			field |= TRB_ISP;
 
 		/* Set the TRB length, TD size, and interrupter fields. */
-		if (xhci->hci_version < 0x100) {
-			remainder = xhci_td_remainder(
-					urb->transfer_buffer_length -
-					running_total);
-		} else {
-			remainder = xhci_v1_0_td_remainder(running_total,
-					trb_buff_len, total_packet_count, urb,
-					num_trbs - 1);
-		}
+		remainder = xhci_td_remainder(xhci, running_total, trb_buff_len,
+					   urb->transfer_buffer_length,
+					   urb, num_trbs - 1);
+
 		length_field = TRB_LEN(trb_buff_len) |
-			remainder |
+			TRB_TD_SIZE(remainder) |
 			TRB_INTR_TARGET(0);
 
 		if (num_trbs > 1)
@@ -3393,7 +3397,7 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	struct usb_ctrlrequest *setup;
 	struct xhci_generic_trb *start_trb;
 	int start_cycle;
-	u32 field, length_field;
+	u32 field, length_field, remainder;
 	struct urb_priv *urb_priv;
 	struct xhci_td *td;
 
@@ -3466,9 +3470,15 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	else
 		field = TRB_TYPE(TRB_DATA);
 
+	remainder = xhci_td_remainder(xhci, 0,
+				   urb->transfer_buffer_length,
+				   urb->transfer_buffer_length,
+				   urb, 1);
+
 	length_field = TRB_LEN(urb->transfer_buffer_length) |
-		xhci_td_remainder(urb->transfer_buffer_length) |
+		TRB_TD_SIZE(remainder) |
 		TRB_INTR_TARGET(0);
+
 	if (urb->transfer_buffer_length > 0) {
 		if (setup->bRequestType & USB_DIR_IN)
 			field |= TRB_DIR_IN;
@@ -3691,17 +3701,12 @@ static int xhci_queue_isoc_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 				trb_buff_len = td_remain_len;
 
 			/* Set the TRB length, TD size, & interrupter fields. */
-			if (xhci->hci_version < 0x100) {
-				remainder = xhci_td_remainder(
-						td_len - running_total);
-			} else {
-				remainder = xhci_v1_0_td_remainder(
-						running_total, trb_buff_len,
-						total_packet_count, urb,
-						(trbs_per_td - j - 1));
-			}
+			remainder = xhci_td_remainder(xhci, running_total,
+						   trb_buff_len, td_len,
+						   urb, trbs_per_td - j - 1);
+
 			length_field = TRB_LEN(trb_buff_len) |
-				remainder |
+				TRB_TD_SIZE(remainder) |
 				TRB_INTR_TARGET(0);
 
 			queue_trb(xhci, ep_ring, more_trbs_coming,
@@ -3841,8 +3846,12 @@ static int queue_command(struct xhci_hcd *xhci, struct xhci_command *cmd,
 {
 	int reserved_trbs = xhci->cmd_ring_reserved_trbs;
 	int ret;
-	if (xhci->xhc_state & XHCI_STATE_DYING)
+
+	if ((xhci->xhc_state & XHCI_STATE_DYING) ||
+		(xhci->xhc_state & XHCI_STATE_HALTED)) {
+		xhci_dbg(xhci, "xHCI dying or halted, can't queue_command\n");
 		return -ESHUTDOWN;
+	}
 
 	if (!command_must_succeed)
 		reserved_trbs++;

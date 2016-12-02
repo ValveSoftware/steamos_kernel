@@ -1287,18 +1287,22 @@ int tty_send_xchar(struct tty_struct *tty, char ch)
 	int	was_stopped = tty->stopped;
 
 	if (tty->ops->send_xchar) {
+		down_read(&tty->termios_rwsem);
 		tty->ops->send_xchar(tty, ch);
+		up_read(&tty->termios_rwsem);
 		return 0;
 	}
 
 	if (tty_write_lock(tty, 0) < 0)
 		return -ERESTARTSYS;
 
+	down_read(&tty->termios_rwsem);
 	if (was_stopped)
 		start_tty(tty);
 	tty->ops->write(tty, &ch, 1);
 	if (was_stopped)
 		stop_tty(tty);
+	up_read(&tty->termios_rwsem);
 	tty_write_unlock(tty);
 	return 0;
 }
@@ -2666,6 +2670,28 @@ static int tiocsetd(struct tty_struct *tty, int __user *p)
 }
 
 /**
+ *	tiocgetd	-	get line discipline
+ *	@tty: tty device
+ *	@p: pointer to user data
+ *
+ *	Retrieves the line discipline id directly from the ldisc.
+ *
+ *	Locking: waits for ldisc reference (in case the line discipline
+ *		is changing or the tty is being hungup)
+ */
+
+static int tiocgetd(struct tty_struct *tty, int __user *p)
+{
+	struct tty_ldisc *ld;
+	int ret;
+
+	ld = tty_ldisc_ref_wait(tty);
+	ret = put_user(ld->ops->num, p);
+	tty_ldisc_deref(ld);
+	return ret;
+}
+
+/**
  *	send_break	-	performed time break
  *	@tty: device to break on
  *	@duration: timeout in mS
@@ -2891,7 +2917,7 @@ long tty_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case TIOCGSID:
 		return tiocgsid(tty, real_tty, p);
 	case TIOCGETD:
-		return put_user(tty->ldisc->ops->num, (int __user *)p);
+		return tiocgetd(tty, p);
 	case TIOCSETD:
 		return tiocsetd(tty, p);
 	case TIOCVHANGUP:

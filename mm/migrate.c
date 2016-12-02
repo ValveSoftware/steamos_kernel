@@ -389,6 +389,7 @@ int migrate_page_move_mapping(struct address_space *mapping,
 
 	return MIGRATEPAGE_SUCCESS;
 }
+EXPORT_SYMBOL(migrate_page_move_mapping);
 
 /*
  * The expected number of remaining references is the same as that
@@ -549,6 +550,7 @@ void migrate_page_copy(struct page *newpage, struct page *page)
 	if (PageWriteback(newpage))
 		end_page_writeback(newpage);
 }
+EXPORT_SYMBOL(migrate_page_copy);
 
 /************************************************************
  *                    Migration functions
@@ -918,7 +920,8 @@ out:
 static ICE_noinline int unmap_and_move(new_page_t get_new_page,
 				   free_page_t put_new_page,
 				   unsigned long private, struct page *page,
-				   int force, enum migrate_mode mode)
+				   int force, enum migrate_mode mode,
+				   enum migrate_reason reason)
 {
 	int rc = 0;
 	int *result = NULL;
@@ -949,7 +952,11 @@ out:
 		list_del(&page->lru);
 		dec_zone_page_state(page, NR_ISOLATED_ANON +
 				page_is_file_cache(page));
-		putback_lru_page(page);
+		/* Soft-offlined page shouldn't go through lru cache list */
+		if (reason == MR_MEMORY_FAILURE)
+			put_page(page);
+		else
+			putback_lru_page(page);
 	}
 
 	/*
@@ -1122,7 +1129,8 @@ int migrate_pages(struct list_head *from, new_page_t get_new_page,
 						pass > 2, mode);
 			else
 				rc = unmap_and_move(get_new_page, put_new_page,
-						private, page, pass > 2, mode);
+						private, page, pass > 2, mode,
+						reason);
 
 			switch(rc) {
 			case -ENOMEM:
@@ -1557,7 +1565,7 @@ static struct page *alloc_misplaced_dst_page(struct page *page,
 					 (GFP_HIGHUSER_MOVABLE |
 					  __GFP_THISNODE | __GFP_NOMEMALLOC |
 					  __GFP_NORETRY | __GFP_NOWARN) &
-					 ~GFP_IOFS, 0);
+					 ~__GFP_WAIT, 0);
 
 	return newpage;
 }
