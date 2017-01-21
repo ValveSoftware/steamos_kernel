@@ -1100,6 +1100,7 @@ struct sony_sc {
 	u8 led_delay_off[MAX_LEDS];
 	u8 led_count;
 	bool ds4_dongle_connected;
+	bool sixaxis_initialized;
 };
 
 static void sony_set_leds(struct sony_sc *sc);
@@ -1288,6 +1289,17 @@ static void sixaxis_parse_report(struct sony_sc *sc, u8 *rd, int size)
 	sc->battery_capacity = battery_capacity;
 	sc->battery_charging = battery_charging;
 	spin_unlock_irqrestore(&sc->lock, flags);
+
+	/*
+	 * On USB, the Sixaxis LEDs flash until the PS button is pressed
+	 * at which time the the first input report is sent.
+	 * Schedule an output report at the first input report to set the
+	 * state of the LEDs so they don't flash indefinitly.
+	 */
+	if (!sc->sixaxis_initialized) {
+		sc->sixaxis_initialized = true;
+		schedule_work(&sc->state_worker);
+	}
 }
 
 static void dualshock4_parse_report(struct sony_sc *sc, u8 *rd, int size)
@@ -1692,6 +1704,27 @@ static void sixaxis_set_leds_from_id(struct sony_sc *sc)
 	memcpy(sc->led_state, sixaxis_leds[id], sizeof(sixaxis_leds[id]));
 }
 
+static int sony_find_joydev(struct device *dev, void *data)
+{
+	if (strstr(dev_name(dev), "js"))
+		return 1;
+
+	return 0;
+}
+
+static int sony_get_js_number(struct sony_sc *sc)
+{
+	struct hid_input *hidinput = list_entry(sc->hdev->inputs.next,
+						struct hid_input, list);
+	struct input_dev *input_dev = hidinput->input;
+	struct device* joydev_dev = device_find_child(&input_dev->dev, NULL, sony_find_joydev);
+
+	if (joydev_dev)
+		return MINOR(joydev_dev->devt);
+
+	return -ENOENT;
+}
+
 static void dualshock4_set_leds_from_id(struct sony_sc *sc)
 {
 	/* The first 4 color/index entries match what the PS4 assigns */
@@ -1705,7 +1738,14 @@ static void dualshock4_set_leds_from_id(struct sony_sc *sc)
 			/* White  */	{ 0x01, 0x01, 0x01 }
 	};
 
-	int id = sc->device_id;
+
+	/*
+	 * Try to use the joystick number to set the LED values.
+	 * If it's not available, use the device ID.
+	 */
+	int id = sony_get_js_number(sc);
+	if (id < 0)
+		id = sc->device_id;
 
 	BUILD_BUG_ON(MAX_LEDS < ARRAY_SIZE(color_code[0]));
 
@@ -1937,9 +1977,14 @@ static int sony_leds_init(struct sony_sc *sc)
 	/*
 	 * Clear LEDs as we have no way of reading their initial state. This is
 	 * only relevant if the driver is loaded after somebody actively set the
-	 * LEDs to on
-	 */
-	sony_set_leds(sc);
+    * LEDs to on
+	 *
+	 * Don't bother with the Sixaxis on USB because the LEDs will just start
+    * flashing again.  Just store the values for now and they will be set
+    * on the controller when the PS button is pushed.
+    */
+	if (!(sc->quirks & SIXAXIS_CONTROLLER_USB))
+		sony_set_leds(sc);
 
 	name_sz = strlen(dev_name(&hdev->dev)) + name_len + 1;
 
