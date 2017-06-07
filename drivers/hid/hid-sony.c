@@ -2740,8 +2740,8 @@ static int sony_suspend(struct hid_device *hdev, pm_message_t message)
 	 * On suspend save the current LED state,
 	 * stop running force-feedback and blank the LEDS.
 	 */
-	if (SONY_LED_SUPPORT || SONY_FF_SUPPORT) {
-		struct sony_sc *sc = hid_get_drvdata(hdev);
+	struct sony_sc *sc = hid_get_drvdata(hdev);
+	if (sc->quirks & (SONY_LED_SUPPORT | SONY_FF_SUPPORT)) {
 
 #ifdef CONFIG_SONY_FF
 		sc->left = sc->right = 0;
@@ -2760,8 +2760,8 @@ static int sony_suspend(struct hid_device *hdev, pm_message_t message)
 static int sony_resume(struct hid_device *hdev)
 {
 	/* Restore the state of controller LEDs on resume */
-	if (SONY_LED_SUPPORT) {
-		struct sony_sc *sc = hid_get_drvdata(hdev);
+	struct sony_sc *sc = hid_get_drvdata(hdev);
+	if (sc->quirks & SONY_LED_SUPPORT) {
 
 		memcpy(sc->led_state, sc->resume_led_state,
 			sizeof(sc->led_state));
