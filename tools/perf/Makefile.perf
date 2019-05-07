@@ -18,7 +18,8 @@ include ../scripts/utilities.mak
 # Define NO_LIBPERL to disable perl script extension.
 #
 # Define NO_LIBPYTHON to disable python script extension.
-#
+NO_LIBPYTHON := 1
+
 # Define PYTHON to point to the python binary if the default
 # `python' is not correct; for example: PYTHON=python2
 #
